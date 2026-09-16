@@ -1,0 +1,143 @@
+"""The `/tt` grammar — mostly about what people will actually type."""
+import pytest
+
+import parsing
+
+ME, BOB, CAL, DEE = "U0ME001", "U0BOB1", "U0CAL1", "U0DEE1"
+
+
+def m(uid, label=None):
+    return f"<@{uid}|{label}>" if label else f"<@{uid}>"
+
+
+def parse(text, caller=ME, **kw):
+    return parsing.parse_match(text, caller=caller, **kw)
+
+
+# --- sides -----------------------------------------------------------------
+
+def test_singles_without_vs_is_you_against_them():
+    r = parse(f"{m(BOB)} 11-7 9-11 11-5")
+    assert r["side_a"] == [ME] and r["side_b"] == [BOB]
+    assert r["games"] == [(11, 7), (9, 11), (11, 5)]
+
+
+def test_doubles_names_your_partner_before_vs():
+    r = parse(f"{m(BOB)} vs {m(CAL)} {m(DEE)} 11-7 11-9")
+    assert r["side_a"] == [ME, BOB] and r["side_b"] == [CAL, DEE]
+
+
+def test_explicit_sides_record_a_match_you_were_not_in():
+    r = parse(f"{m(BOB)} {m(CAL)} vs {m(DEE)} <@U0EVE1> 11-7 11-9", caller="U0SCOR1")
+    assert r["side_a"] == [BOB, CAL] and r["side_b"] == [DEE, "U0EVE1"]
+
+
+def test_you_are_not_added_to_a_match_you_already_appear_in():
+    r = parse(f"{m(ME)} vs {m(BOB)} 11-7")
+    assert r["side_a"] == [ME] and r["side_b"] == [BOB]
+
+
+def test_vs_with_nobody_in_front_still_means_you():
+    assert parse(f"vs {m(BOB)} 11-7")["side_a"] == [ME]
+
+
+def test_mention_labels_and_punctuation_are_tolerated():
+    r = parse(f"{m(BOB, 'bob.smith')}, 11-7, 9-11.")
+    assert r["side_b"] == [BOB] and r["games"] == [(11, 7), (9, 11)]
+
+
+def test_the_bot_is_not_a_player():
+    r = parse(f"<@U0BOT01> {m(BOB)} 11-7", bot_id="U0BOT01")
+    assert r["side_b"] == [BOB]
+
+
+def test_a_player_mentioned_twice_counts_once():
+    r = parse(f"{m(BOB)} {m(BOB)} 11-7")
+    assert r["side_b"] == [BOB]
+
+
+# --- scores ----------------------------------------------------------------
+
+@pytest.mark.parametrize("text", ["11-7", "11 - 7", "11:7", "11 : 7", "11–7"])
+def test_score_separators(text):
+    assert parse(f"{m(BOB)} {text}")["games"] == [(11, 7)]
+
+
+def test_games_to_twenty_one_still_work():
+    assert parse(f"{m(BOB)} 21-19 18-21 21-15")["games"] == [(21, 19), (18, 21), (21, 15)]
+
+
+def test_one_game_is_enough():
+    assert parse(f"{m(BOB)} 11-9")["games"] == [(11, 9)]
+
+
+def test_stray_words_are_ignored():
+    r = parse(f"beat {m(BOB)} today 11-7 and 11-9 in the kitchen")
+    assert r["games"] == [(11, 7), (11, 9)] and r["side_b"] == [BOB]
+
+
+# --- rejections ------------------------------------------------------------
+
+@pytest.mark.parametrize("text,fragment", [
+    ("11-7 9-11", "who played"),                      # nobody mentioned
+    ("<@U0BOB1>", "No game scores"),                   # no scores
+    ("<@U0BOB1> 11-11", "has to win"),                 # a tie is not a finished game
+    ("<@U0BOB1> <@U0CAL1> 11-7", "Uneven sides"),       # 1 v 2 without vs
+    ("<@U0ME001> 11-7", "both sides"),                   # playing yourself
+    ("<@U0BOB1> <@U0CAL1> <@U0DEE1> vs <@U0EVE1> <@U0FFF1> <@U0GGG1> 11-7", "more than two a side"),
+])
+def test_bad_input_explains_itself(text, fragment):
+    with pytest.raises(parsing.ParseError) as e:
+        parse(text)
+    assert fragment in str(e.value)
+
+
+def test_absurd_scores_are_rejected():
+    with pytest.raises(parsing.ParseError, match="out of range"):
+        parse(f"{m(BOB)} 99-100")
+
+
+def test_too_many_games_is_a_typo():
+    with pytest.raises(parsing.ParseError, match="typo"):
+        parse(f"{m(BOB)} " + " ".join(["11-7"] * (parsing.elo.MAX_GAMES + 1)))
+
+
+# --- subcommands -----------------------------------------------------------
+
+@pytest.mark.parametrize("text,expected", [
+    ("log <@U0BOB1> 11-7", "log"),
+    ("add <@U0BOB1> 11-7", "log"),
+    ("board", "board"),
+    ("leaderboard", "board"),
+    ("TOP", "board"),
+    ("me", "me"),
+    ("stats <@U0BOB1>", "me"),
+    ("undo", "undo"),
+    ("history", "history"),
+    ("pending", "pending"),
+    ("odds <@U0BOB1>", "odds"),
+    ("", "help"),
+    ("   ", "help"),
+    ("what is this", "help"),
+])
+def test_subcommand_aliases(text, expected):
+    assert parsing.split_subcommand(text)[0] == expected
+
+
+def test_the_log_verb_is_optional_once_you_know_the_bot():
+    sub, rest = parsing.split_subcommand("<@U0BOB1> 11-7 9-11")
+    assert sub == "log"
+    assert parse(rest)["games"] == [(11, 7), (9, 11)]
+
+
+def test_the_verb_is_stripped_before_the_players():
+    sub, rest = parsing.split_subcommand("log <@U0BOB1> 11-7")
+    assert sub == "log" and rest == "<@U0BOB1> 11-7"
+
+
+# --- odds ------------------------------------------------------------------
+
+def test_odds_needs_no_scores():
+    assert parsing.parse_odds(f"{m(BOB)}", caller=ME) == ([ME], [BOB])
+    assert parsing.parse_odds(f"{m(BOB)} vs {m(CAL)} {m(DEE)}", caller=ME) == \
+        ([ME, BOB], [CAL, DEE])

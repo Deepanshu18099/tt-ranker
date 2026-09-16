@@ -1,0 +1,32 @@
+display_information:
+  name: TT Ranker
+  description: Table tennis Elo ratings for the office ladder.
+  background_color: "#1a4d2e"
+features:
+  bot_user:
+    display_name: tt-ranker
+    always_online: true
+  slash_commands:
+    - command: /tt
+      url: https://tt-ranker.vercel.app/slack/events
+      description: Log a table tennis match and track the ladder
+      usage_hint: log @opponent 11-7 9-11 11-5  ·  board  ·  me  ·  help
+      should_escape: true
+oauth_config:
+  scopes:
+    bot:
+      # chat:write posts and edits the match message; .public lets it post in a
+      # public channel it has not been invited to. commands is the slash command.
+      - chat:write
+      - chat:write.public
+      - commands
+settings:
+  interactivity:
+    # Required: the Confirm / That's wrong buttons are interactive components.
+    is_enabled: true
+    request_url: https://tt-ranker.vercel.app/slack/events
+  # No event subscriptions — the bot only reacts to /tt and its own buttons, so
+  # it never needs to read channel messages.
+  socket_mode_enabled: false
+  org_deploy_enabled: false
+  token_rotation_enabled: false
