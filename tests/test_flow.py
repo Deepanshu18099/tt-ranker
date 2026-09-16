@@ -705,3 +705,99 @@ def test_settling_the_match_still_replaces_the_prompt(fake, client):
     run(f"log <@{B}> 11-7", client)
     press(bot.handle_confirm, posted_mid(client), B, client)
     assert client.chat_update.call_count == 1
+
+
+# --- admin: record a result with no confirmation --------------------------
+
+ADMIN = "U0ADMIN1"
+
+
+@pytest.fixture
+def admin(monkeypatch):
+    monkeypatch.setenv("TT_ADMINS", ADMIN)
+    return ADMIN
+
+
+def test_an_admin_session_is_rated_immediately(fake, client, admin):
+    run(f"log <@{B}> 11-7 11-9 11-8", client, user=ADMIN)
+    assert store.list_pending() == []            # never waits on anyone
+    assert fake.rating(ADMIN) > elo.START_RATING > fake.rating(B)
+    posted = said(client.chat_postMessage)
+    assert "beat" in posted and str(fake.rating(ADMIN)) in posted
+
+
+def test_the_admin_result_has_no_buttons_to_press(fake, client, admin):
+    run(f"log <@{B}> 11-7", client, user=ADMIN)
+    blocks = client.chat_postMessage.call_args.kwargs["blocks"]
+    assert not any(b["type"] == "actions" for b in blocks)
+
+
+def test_skipping_confirmation_is_visible_to_the_channel(fake, client, admin):
+    """An admin result must not be indistinguishable from an agreed one."""
+    run(f"log <@{B}> 11-7", client, user=ADMIN)
+    assert f"recorded by <@{ADMIN}>" in said(client.chat_postMessage)
+
+
+def test_a_non_admin_still_needs_confirmation(fake, client, admin):
+    run(f"log <@{B}> 11-7", client, user=A)
+    assert len(store.list_pending()) == 1
+    assert fake.data.get(store.player_key(A)) is None
+
+
+def test_admin_rights_come_from_the_environment(fake, client, monkeypatch):
+    monkeypatch.setenv("TT_ADMINS", "")
+    run(f"log <@{B}> 11-7", client, user=ADMIN)
+    assert len(store.list_pending()) == 1        # nobody is an admin by default
+
+
+@pytest.mark.parametrize("raw", ["U0ADMIN1", "U0ADMIN1,U0AAA1", "U0ADMIN1 U0AAA1",
+                                 " U0ADMIN1 , U0AAA1 "])
+def test_the_admin_list_accepts_commas_or_spaces(monkeypatch, raw):
+    monkeypatch.setenv("TT_ADMINS", raw)
+    assert bot.is_admin(ADMIN)
+    assert not bot.is_admin("U0NOBODY")
+
+
+def test_an_admin_can_settle_someone_elses_stuck_session(fake, client, admin):
+    """The only way to clear a session whose players have gone quiet, short of
+    waiting for the daily sweep."""
+    run(f"log <@{B}> 11-7 11-9", client, user=A)
+    mid = posted_mid(client)
+    press(bot.handle_confirm, mid, ADMIN, client)
+    assert store.get_pending(mid) is None
+    assert fake.rating(A) > elo.START_RATING
+
+
+def test_an_admin_can_throw_out_someone_elses_session(fake, client, admin):
+    run(f"log <@{B}> 11-7", client, user=A)
+    press(bot.handle_dispute, posted_mid(client), ADMIN, client)
+    assert store.list_pending() == []
+    assert fake.data.get(store.player_key(A)) is None
+
+
+def test_a_non_admin_bystander_still_cannot(fake, client, admin):
+    run(f"log <@{B}> 11-7", client, user=A)
+    respond = press(bot.handle_confirm, posted_mid(client), C, client)
+    assert "Only" in said(respond)
+    assert store.list_pending()
+
+
+def test_an_admin_session_is_undoable_like_any_other(fake, client, admin):
+    run(f"log <@{B}> 11-7 11-9", client, user=ADMIN)
+    assert "Undid" in said(run("undo", client, user=ADMIN))
+    assert fake.rating(ADMIN) == fake.rating(B) == elo.START_RATING
+
+
+def test_an_admin_session_that_cannot_be_posted_still_counts(fake, client, admin):
+    """Rated before posting, so a channel problem can't silently drop a result."""
+    client.chat_postMessage.side_effect = Exception("not_in_channel")
+    respond = run(f"log <@{B}> 11-7", client, user=ADMIN)
+    assert fake.rating(ADMIN) > elo.START_RATING
+    assert "Ratings updated" in said(respond)
+
+
+def test_an_admin_can_record_a_session_between_two_other_people(fake, client, admin):
+    run(f"log <@{A}> vs <@{B}> 11-7 11-9", client, user=ADMIN)
+    assert store.list_pending() == []
+    assert fake.rating(A) > elo.START_RATING > fake.rating(B)
+    assert fake.data.get(store.player_key(ADMIN)) is None   # not a player here

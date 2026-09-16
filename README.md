@@ -106,6 +106,12 @@ is the person it costs.
 In doubles, either opponent can confirm. If a bystander logged the match, any of
 the four players can.
 
+**Admins skip it.** Anyone listed in `TT_ADMINS` has their sessions rated the
+moment they log them, and can confirm or throw out anybody else's pending
+session — the only way to clear one whose players have gone quiet, short of
+waiting for the daily sweep. The result still says *recorded by @them* 🛡, so
+skipping the confirmation is visible to the channel rather than silent.
+
 ### Joining
 
 **Anyone who joins `TT_CHANNEL` is put on the ladder automatically** and gets a
@@ -452,6 +458,7 @@ Import the repo, then set under **Settings → Environment Variables**:
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | always — set by the Upstash integration |
 | `TT_CHANNEL` | the ladder's home channel — weekly standings land here, and joining it registers you |
 | `CRON_SECRET` | authenticates `/cron/*`; Vercel sends it automatically once set |
+| `TT_ADMINS` | optional — ids who can record a result without confirmation |
 
 Deploy. `vercel.json` rewrites every path to `api/index.py` and registers both
 cron jobs. **Environment variable changes need a redeploy to take effect.**
@@ -515,7 +522,11 @@ cp .env.example .env     # fill it in
 .venv/bin/python socket_mode.py
 ```
 
-**Tests.** 150 of them, no network, no database.
+Behind a TLS-intercepting corporate proxy, local runs also need
+`REQUESTS_CA_BUNDLE=vmock-ca.crt` — the proxy's CA is committed here for that.
+(Vercel isn't behind it, so production needs nothing.)
+
+**Tests.** 259 of them, no network, no database.
 
 ```sh
 .venv/bin/pip install -r requirements-dev.txt

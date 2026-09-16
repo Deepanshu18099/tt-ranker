@@ -146,10 +146,14 @@ def applied_blocks(blob):
         before, after = blob["before"][uid], blob["after"][uid]
         lines.append(f"<@{uid}>  {before} → *{after}*  `{fmt_delta(blob['deltas'][uid])}`")
 
-    how = ("auto-confirmed — nobody objected"
-           if blob.get("auto_confirmed")
-           else (f"confirmed by <@{blob['confirmed_by']}>" if blob.get("confirmed_by")
-                 else "confirmed"))
+    if blob.get("admin"):
+        how = f"recorded by <@{blob['confirmed_by']}> :shield:"
+    elif blob.get("auto_confirmed"):
+        how = "auto-confirmed — nobody objected"
+    elif blob.get("confirmed_by"):
+        how = f"confirmed by <@{blob['confirmed_by']}>"
+    else:
+        how = "confirmed"
     tail = f"Match `#{blob['id']}` · {how}"
     if blob.get("doubles"):
         tail += " · doubles"
@@ -157,6 +161,21 @@ def applied_blocks(blob):
 
 
 # --- who may confirm -------------------------------------------------------
+
+def admins():
+    """Slack ids allowed to record a result without anyone confirming it.
+
+    Read from TT_ADMINS at call time rather than captured at import, so adding
+    someone is an environment change instead of a code change. Comma- or
+    space-separated: "U08V0KSE092, U02LJ0Z08KZ".
+    """
+    raw = os.environ.get("TT_ADMINS", "")
+    return {u.strip() for u in raw.replace(",", " ").split() if u.strip()}
+
+
+def is_admin(uid):
+    return bool(uid) and uid in admins()
+
 
 def confirmers(record):
     """Who can confirm: the side the reporter is *not* on.
@@ -179,6 +198,16 @@ def disputers(record):
     return list(dict.fromkeys(record["side_a"] + record["side_b"] + [record["logged_by"]]))
 
 
+def may_confirm(record, uid):
+    """Admins can settle anything, which is the only way to clear a session whose
+    players have gone quiet before the sweep gets to it."""
+    return is_admin(uid) or uid in confirmers(record)
+
+
+def may_dispute(record, uid):
+    return is_admin(uid) or uid in disputers(record)
+
+
 # --- /tt log ---------------------------------------------------------------
 
 def submit_match(side_a, side_b, games, logged_by, channel, client, bot_id=None, logger=None):
@@ -189,6 +218,8 @@ def submit_match(side_a, side_b, games, logged_by, channel, client, bot_id=None,
     what happens after a valid match is entered.
     """
     record = store.create_pending(side_a, side_b, games, logged_by=logged_by, channel=channel)
+    if is_admin(logged_by):
+        return _record_as_admin(record, logged_by, channel, client, bot_id, logger)
     try:
         # Posted rather than `respond`ed so a confirmation hours later can still
         # edit it: a slash command's response_url expires after 30 minutes.
@@ -203,6 +234,34 @@ def submit_match(side_a, side_b, games, logged_by, channel, client, bot_id=None,
         invite = f" with `/invite <@{bot_id}>`" if bot_id else ""
         return f":warning: I couldn't post in that channel — invite me there{invite} and log it again."
     store.set_pending_message(record["id"], resp["channel"], resp["ts"])
+    return None
+
+
+def _record_as_admin(record, admin, channel, client, bot_id=None, logger=None):
+    """Rate an admin's session straight away, with no confirmation step.
+
+    Rated before posting, not after: if the post fails the rating has still
+    moved, which is recoverable and visible in `/tt history`. The other order
+    would put a message in the channel announcing a change that never happened.
+
+    The result still names who recorded it, so skipping the confirmation is
+    visible to the channel rather than silent.
+    """
+    store.claim_pending(record["id"])
+    try:
+        blob = store.apply_match(record, confirmed_by=admin, admin=True)
+    except Exception:
+        store.drop_pending(record["id"])
+        (logger or log).exception("admin apply of %s failed", record["id"])
+        return ":x: Something went wrong rating that session — try again in a moment."
+    try:
+        client.chat_postMessage(channel=channel, blocks=applied_blocks(blob),
+                                text=f"Session recorded by <@{admin}>.")
+    except Exception as e:
+        (logger or log).warning("could not post admin result: %s", e)
+        invite = f" with `/invite <@{bot_id}>`" if bot_id else ""
+        return (f":warning: Ratings updated, but I couldn't post the result in that "
+                f"channel — invite me there{invite}. See `/tt history`.")
     return None
 
 
@@ -387,8 +446,8 @@ def handle_confirm(body, client, respond, logger=None):
     if not record:
         _only_you(respond, ":information_source: That match has already been settled.")
         return
-    allowed = confirmers(record)
-    if allowed and user not in allowed:
+    if not may_confirm(record, user):
+        allowed = confirmers(record)
         _only_you(respond, f":lock: Only {fmt_side(allowed)} can confirm this one.")
         return
     if not store.claim_pending(mid):
@@ -412,7 +471,7 @@ def handle_dispute(body, client, respond, logger=None):
     if not record:
         _only_you(respond, ":information_source: That match has already been settled.")
         return
-    if user not in disputers(record):
+    if not may_dispute(record, user):
         _only_you(respond, ":lock: Only the players in this match can dispute it.")
         return
     store.drop_pending(mid)

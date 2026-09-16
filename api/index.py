@@ -45,7 +45,7 @@ def _debug_payload(observed_path):
     import store
 
     required = ("SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "KV_REST_API_URL",
-                "KV_REST_API_TOKEN", "CRON_SECRET", "TT_CHANNEL")
+                "KV_REST_API_TOKEN", "CRON_SECRET", "TT_CHANNEL", "TT_ADMINS")
     payload = {
         "commit": os.environ.get("VERCEL_GIT_COMMIT_SHA", "unknown")[:7],
         # Which deployment answered, and which env's variables it was built with.

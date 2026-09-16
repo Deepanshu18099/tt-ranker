@@ -254,7 +254,7 @@ def is_expired(record, now=None, hours=AUTO_CONFIRM_HOURS):
 
 # --- applying a match ------------------------------------------------------
 
-def apply_match(record, confirmed_by=None, auto=False, now=None):
+def apply_match(record, confirmed_by=None, auto=False, admin=False, now=None):
     """Rate a pending match against *current* ratings and write everything down.
 
     Returns the stored match blob. The caller must have won claim_pending()
@@ -290,6 +290,9 @@ def apply_match(record, confirmed_by=None, auto=False, now=None):
     blob.update(rated)
     blob.update({
         "confirmed_by": confirmed_by or "", "auto_confirmed": bool(auto),
+        # Recorded so the message can say a confirmation was skipped, rather
+        # than an admin result being indistinguishable from an agreed one.
+        "admin": bool(admin),
         "applied_at": stamp(now), "week": wk,
         # The undo snapshot: exactly what each player looked like beforehand.
         "snapshot": {uid: players[uid] for uid in uids},

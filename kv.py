@@ -18,8 +18,55 @@ Unlike pr-raiser there is no degraded fallback mode — ratings have to live
 somewhere — so callers check kv_available() and say so plainly instead.
 """
 import os
+import ssl
 
 import requests
+from requests.adapters import HTTPAdapter
+
+try:
+    from urllib3.util.ssl_ import create_urllib3_context
+except ImportError:  # pragma: no cover - urllib3 always ships with requests
+    create_urllib3_context = None
+
+
+class _RelaxedStrictAdapter(HTTPAdapter):
+    """Trusts a corporate TLS proxy without giving up verification.
+
+    The proxy re-signs certificates without an Authority Key Identifier, which
+    Python 3.13+ rejects outright — so on a laptop behind it, every call here
+    dies with CERTIFICATE_VERIFY_FAILED even once the proxy's CA is trusted.
+    Keep full verification and drop only the strict flag, the same trade
+    bot.build_app() makes for the Slack client.
+
+    Vercel isn't behind the proxy, so in production this changes nothing.
+    """
+
+    def _context(self):
+        ctx = create_urllib3_context()
+        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+        return ctx
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["ssl_context"] = self._context()
+        return super().init_poolmanager(*args, **kwargs)
+
+    def proxy_manager_for(self, *args, **kwargs):
+        kwargs["ssl_context"] = self._context()
+        return super().proxy_manager_for(*args, **kwargs)
+
+
+_SESSION = None
+
+
+def _session():
+    """One pooled Session for the process. Also saves a TCP+TLS handshake per
+    command, which adds up when a doubles confirmation makes a dozen calls."""
+    global _SESSION
+    if _SESSION is None:
+        _SESSION = requests.Session()
+        if create_urllib3_context is not None:
+            _SESSION.mount("https://", _RelaxedStrictAdapter())
+    return _SESSION
 
 
 def _config():
@@ -37,8 +84,8 @@ def _post(path, payload, timeout):
     url, token = _config()
     if not (url and token):
         raise RuntimeError("KV not configured")
-    r = requests.post(url.rstrip("/") + path, json=payload, timeout=timeout,
-                      headers={"Authorization": f"Bearer {token}"})
+    r = _session().post(url.rstrip("/") + path, json=payload, timeout=timeout,
+                        headers={"Authorization": f"Bearer {token}"})
     r.raise_for_status()
     return r.json()
 
