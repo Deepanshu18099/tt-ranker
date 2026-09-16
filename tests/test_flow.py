@@ -30,10 +30,12 @@ def client():
 
 
 def run(text, client, user=A, respond=None):
-    """Drive `/tt <text>` the way Bolt would."""
+    """Drive `/tt <text>` the way Bolt would. trigger_id is always present on a
+    real slash command and is what opens the form."""
     respond = respond or MagicMock()
     bot.handle_tt_command(
-        MagicMock(), {"user_id": user, "text": text, "channel_id": "C1"},
+        MagicMock(), {"user_id": user, "text": text, "channel_id": "C1",
+                      "trigger_id": "tid.1"},
         respond, client=client, context={"bot_user_id": BOT})
     return respond
 
@@ -320,3 +322,188 @@ def test_without_a_database_it_says_so(client, monkeypatch):
 def test_an_unexpected_failure_is_not_a_stack_trace(fake, client, monkeypatch):
     monkeypatch.setattr(store, "all_players", MagicMock(side_effect=RuntimeError("boom")))
     assert "went wrong" in said(run("board", client))
+
+
+# --- auto-registration on joining the channel ------------------------------
+
+def joined(channel, user, client, context=None):
+    bot.handle_member_joined({"channel": channel, "user": user}, client=client,
+                             context=context if context is not None else {"bot_user_id": BOT})
+
+
+def test_joining_the_home_channel_puts_you_on_the_ladder(fake, client, monkeypatch):
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "C_TT")
+    joined("C_TT", B, client)
+    assert store.get_player(B)["rating"] == elo.START_RATING
+    dm = said(client.chat_postMessage)
+    assert f"<@{B}>" in dm and "Welcome" in dm
+    assert client.chat_postMessage.call_args.kwargs["channel"] == B   # a DM, not the channel
+
+
+def test_joining_some_other_channel_does_nothing(fake, client, monkeypatch):
+    """The bot being invited somewhere busy for one match must not enrol that
+    channel's whole membership."""
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "C_TT")
+    joined("C_RANDOM", B, client)
+    assert store.get_player(B) is None
+    assert client.chat_postMessage.call_count == 0
+
+
+def test_the_bot_joining_is_not_a_new_player(fake, client, monkeypatch):
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "C_TT")
+    joined("C_TT", BOT, client)
+    assert store.get_player(BOT) is None
+
+
+def test_rejoining_does_not_welcome_you_twice(fake, client, monkeypatch):
+    """Slack retries event deliveries; ensure_players only reports genuinely new
+    uids, so the second delivery is silent."""
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "C_TT")
+    joined("C_TT", B, client)
+    joined("C_TT", B, client)
+    assert client.chat_postMessage.call_count == 1
+
+
+def test_a_failed_welcome_dm_still_registers_the_player(fake, client, monkeypatch):
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "C_TT")
+    client.chat_postMessage.side_effect = Exception("cannot_dm_bot")
+    joined("C_TT", B, client)
+    assert store.get_player(B)["rating"] == elo.START_RATING
+
+
+def test_auto_registration_is_off_without_a_home_channel(fake, client, monkeypatch):
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "")
+    joined("C_TT", B, client)
+    assert store.get_player(B) is None
+
+
+# --- /tt sync --------------------------------------------------------------
+
+def members(client, *uids, pages=None):
+    """Stub conversations.members, optionally paginated."""
+    if pages:
+        client.conversations_members.side_effect = [
+            {"members": page, "response_metadata": {"next_cursor": cur}}
+            for page, cur in pages]
+    else:
+        client.conversations_members.return_value = {"members": list(uids)}
+
+
+def test_sync_backfills_everyone_already_in_the_channel(fake, client):
+    members(client, A, B, C, BOT)
+    out = said(run("sync", client))
+    assert "Added *3*" in out and f"<@{C}>" in out
+    assert sorted(store.all_players()) == sorted([A, B, C])   # not the bot
+
+
+def test_sync_a_second_time_adds_nobody(fake, client):
+    members(client, A, B)
+    run("sync", client)
+    assert "already on the ladder" in said(run("sync", client))
+
+
+def test_sync_follows_slack_pagination(fake, client):
+    members(client, pages=[([A, B], "cur1"), ([C, D], "")])
+    run("sync", client)
+    assert sorted(store.all_players()) == sorted([A, B, C, D])
+
+
+def test_sync_says_what_to_fix_when_it_cannot_read_the_channel(fake, client):
+    client.conversations_members.side_effect = Exception("missing_scope")
+    out = said(run("sync", client))
+    assert "channels:read" in out and "missing_scope" in out
+    assert store.all_players() == {}
+
+
+def test_sync_mentions_auto_registration_only_in_the_home_channel(fake, client, monkeypatch):
+    members(client, A, B)
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "C1")     # run() posts from C1
+    assert "automatically" in said(run("sync", client))
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "C_OTHER")
+    members(client, C, D)
+    assert "automatically" not in said(run("sync", client))
+
+
+# --- the guided form -------------------------------------------------------
+
+def submit(state, client, user=A, channel="C1", respond=None):
+    ack = MagicMock()
+    bot.handle_log_modal(ack, {"user": {"id": user}},
+                         {"state": {"values": state}, "private_metadata": channel},
+                         client=client)
+    return ack
+
+
+def form_state(side_a, side_b, games):
+    return {"side_a": {"v": {"selected_users": side_a}},
+            "side_b": {"v": {"selected_users": side_b}},
+            "games": {"v": {"value": games}}}
+
+
+def test_a_bare_log_opens_the_form(fake, client):
+    run("log", client)
+    view = client.views_open.call_args.kwargs["view"]
+    assert view["callback_id"] == bot.LOG_MODAL
+    assert view["private_metadata"] == "C1"
+    assert [b["block_id"] for b in view["blocks"]] == ["side_a", "side_b", "games"]
+
+
+def test_the_form_pre_picks_you_on_your_own_side(fake, client):
+    run("log", client)
+    view = client.views_open.call_args.kwargs["view"]
+    assert view["blocks"][0]["element"]["initial_users"] == [A]
+
+
+def test_the_form_caps_each_side_at_two(fake, client):
+    run("log", client)
+    view = client.views_open.call_args.kwargs["view"]
+    assert all(b["element"]["max_selected_items"] == 2 for b in view["blocks"][:2])
+
+
+def test_a_form_that_cannot_open_falls_back_to_the_typed_form(fake, client):
+    client.views_open.side_effect = Exception("expired_trigger_id")
+    assert "type it instead" in said(run("log", client))
+
+
+def test_submitting_the_form_logs_the_match(fake, client):
+    ack = submit(form_state([A], [B], "11-7 9-11 11-5"), client)
+    ack.assert_called_once_with()          # closed cleanly, no errors
+    record = store.get_pending(posted_mid(client))
+    assert record["side_a"] == [A] and record["side_b"] == [B]
+    assert record["games"] == [[11, 7], [9, 11], [11, 5]]
+
+
+def test_the_form_logs_doubles_from_the_pickers_alone(fake, client):
+    submit(form_state([A, B], [C, D], "11-7 11-9"), client)
+    record = store.get_pending(posted_mid(client))
+    assert record["side_a"] == [A, B] and record["side_b"] == [C, D]
+
+
+def test_a_form_match_confirms_like_any_other(fake, client):
+    submit(form_state([A], [B], "11-7 11-9"), client)
+    press(bot.handle_confirm, posted_mid(client), B, client)
+    assert fake.rating(A) > elo.START_RATING > fake.rating(B)
+
+
+@pytest.mark.parametrize("state,field,fragment", [
+    (form_state([A], [B], "not scores"), "games", "No game scores"),
+    (form_state([A], [B], "11-11"), "games", "has to win"),
+    (form_state([A], [B, C], "11-7"), "side_b", "Uneven sides"),
+    (form_state([A], [A], "11-7"), "side_b", "both sides"),
+    (form_state([A], [], "11-7"), "side_b", "who played"),
+])
+def test_form_errors_come_back_on_the_field(fake, client, state, field, fragment):
+    """Attached to the field rather than posted after the modal closes, so a typo
+    is one correction instead of a retype."""
+    ack = submit(state, client)
+    kwargs = ack.call_args.kwargs
+    assert kwargs["response_action"] == "errors"
+    assert fragment in kwargs["errors"][field]
+    assert store.list_pending() == []      # nothing parked on a rejected form
+
+
+def test_a_form_match_that_cannot_be_posted_is_explained_by_dm(fake, client):
+    client.chat_postMessage.side_effect = Exception("not_in_channel")
+    submit(form_state([A], [B], "11-7"), client)
+    assert client.chat_postMessage.call_args.kwargs["channel"] == A   # DM to the logger
+    assert store.list_pending() == []

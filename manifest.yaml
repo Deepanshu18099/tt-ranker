@@ -10,23 +10,32 @@ features:
     - command: /tt
       url: https://tt-ranker.vercel.app/slack/events
       description: Log a table tennis match and track the ladder
-      usage_hint: log @opponent 11-7 9-11 11-5  ·  board  ·  me  ·  help
+      usage_hint: log  ·  log @opponent 11-7 9-11 11-5  ·  board  ·  me  ·  help
       should_escape: true
 oauth_config:
   scopes:
     bot:
-      # chat:write posts and edits the match message; .public lets it post in a
-      # public channel it has not been invited to. commands is the slash command.
+      # chat:write posts and edits the match message and DMs new players;
+      # .public lets it post in a public channel it has not been invited to.
       - chat:write
       - chat:write.public
       - commands
+      # channels:read / groups:read carry the member_joined_channel event and
+      # back conversations.members for /tt sync. Adding these needs a reinstall.
+      - channels:read
+      - groups:read
 settings:
   interactivity:
-    # Required: the Confirm / That's wrong buttons are interactive components.
+    # Required: the Confirm / That's wrong buttons and the log form are
+    # interactive components.
     is_enabled: true
     request_url: https://tt-ranker.vercel.app/slack/events
-  # No event subscriptions — the bot only reacts to /tt and its own buttons, so
-  # it never needs to read channel messages.
+  event_subscriptions:
+    request_url: https://tt-ranker.vercel.app/slack/events
+    bot_events:
+      # Joining the ladder's home channel (TT_CHANNEL) puts you on the ladder.
+      # The bot reads no messages — this is the only event it subscribes to.
+      - member_joined_channel
   socket_mode_enabled: false
   org_deploy_enabled: false
   token_rotation_enabled: false

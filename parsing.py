@@ -43,6 +43,9 @@ SUBCOMMANDS = {
     "undo": "undo", "oops": "undo",
     "pending": "pending", "unconfirmed": "pending",
     "odds": "odds", "predict": "odds", "chance": "odds",
+    "sync": "sync", "backfill": "sync",
+    # `form` and a bare `log` both open the guided modal.
+    "form": "log", "new": "log",
     "help": "help", "h": "help", "usage": "help",
 }
 
@@ -110,7 +113,7 @@ def _sides(tokens, caller):
 
     # Slack's autocomplete makes a double @mention easy; within one side that is
     # plainly a slip. The same name on *both* sides is a real mistake, so that
-    # one is left for _validate_sides to reject.
+    # one is left for validate_sides to reject.
     side_a, side_b = list(dict.fromkeys(side_a)), list(dict.fromkeys(side_b))
 
     if not has_vs:
@@ -130,12 +133,12 @@ def parse_match(text, caller=None, bot_id=None):
     tokens = _tokenize(text, exclude=bot_id)
     side_a, side_b = _sides(tokens, caller)
     games = [v for kind, v in tokens if kind == "score"]
-    _validate_sides(side_a, side_b)
-    _validate_games(games)
+    validate_sides(side_a, side_b)
+    validate_games(games)
     return {"side_a": side_a, "side_b": side_b, "games": games}
 
 
-def _validate_sides(side_a, side_b):
+def validate_sides(side_a, side_b):
     if not side_a or not side_b:
         raise ParseError(
             "I need to know who played. Try `/tt log @opponent 11-7 9-11 11-5`, "
@@ -153,7 +156,7 @@ def _validate_sides(side_a, side_b):
         raise ParseError("Singles and doubles only — that's more than two a side.")
 
 
-def _validate_games(games):
+def validate_games(games):
     if not games:
         raise ParseError(
             "No game scores found. Add them as points, one per game: "
@@ -168,9 +171,21 @@ def _validate_games(games):
             raise ParseError(f"`{a}-{b}` is out of range — scores are the points in one game.")
 
 
+def parse_games(text):
+    """Just the game scores out of a blob of text.
+
+    What the guided form's score field hands us — players come from its people
+    pickers, so there are no mentions to separate out. Same validation as the
+    typed path, so the two routes can never disagree about what a legal match is.
+    """
+    games = [v for kind, v in _tokenize(text) if kind == "score"]
+    validate_games(games)
+    return games
+
+
 def parse_odds(text, caller=None, bot_id=None):
     """`/tt odds @bob` or `/tt odds @a @b vs @c @d` → (side_a, side_b), on the
     same side rules as a match but with no scores to give."""
     side_a, side_b = _sides(_tokenize(text, exclude=bot_id), caller)
-    _validate_sides(side_a, side_b)
+    validate_sides(side_a, side_b)
     return side_a, side_b

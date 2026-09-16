@@ -38,10 +38,17 @@ import store
 CONFIRM_ACTION = "tt_confirm"
 DISPUTE_ACTION = "tt_dispute"
 
+# The ladder's home channel: the weekly standings post lands here, and joining it
+# puts you on the ladder. standings.py reads the same variable for its own copy.
+HOME_CHANNEL = os.environ.get("TT_CHANNEL", "")
+
 # Below this many matches a rating says more about luck than about the player,
 # so they sit in a "still placing" line instead of the ladder proper.
 PLACEMENT_MATCHES = 5
 BOARD_LIMIT = 20
+# Guard on /tt sync: a ladder is a room of people who play each other, and
+# anything past this is someone running it in the wrong channel.
+SYNC_LIMIT = 500
 MEDALS = (":first_place_medal:", ":second_place_medal:", ":third_place_medal:")
 
 NO_KV = (":warning: No database is configured, so I can't track ratings. "
@@ -173,33 +180,141 @@ def disputers(record):
 
 # --- /tt log ---------------------------------------------------------------
 
+def submit_match(side_a, side_b, games, logged_by, channel, client, bot_id=None, logger=None):
+    """Park a match and post its confirmation prompt. Returns None on success, or
+    a message to relay to whoever logged it.
+
+    Shared by the typed command and the guided form, so the two can't drift on
+    what happens after a valid match is entered.
+    """
+    record = store.create_pending(side_a, side_b, games, logged_by=logged_by, channel=channel)
+    try:
+        # Posted rather than `respond`ed so a confirmation hours later can still
+        # edit it: a slash command's response_url expires after 30 minutes.
+        resp = client.chat_postMessage(
+            channel=channel, blocks=pending_blocks(record),
+            text=f"Match logged by <@{logged_by}> — needs confirming.")
+    except Exception as e:
+        # Almost always not_in_channel. Drop the pending rather than leave one
+        # nobody can see, let alone confirm.
+        store.drop_pending(record["id"])
+        (logger or log).warning("could not post pending match: %s", e)
+        invite = f" with `/invite <@{bot_id}>`" if bot_id else ""
+        return f":warning: I couldn't post in that channel — invite me there{invite} and log it again."
+    store.set_pending_message(record["id"], resp["channel"], resp["ts"])
+    return None
+
+
 def handle_log(command, respond, client, bot_id, logger=None):
     caller = command.get("user_id")
     _, rest = parsing.split_subcommand(command.get("text", ""))
+
+    if not rest.strip():
+        # A bare `/tt log` (or `/tt form`) opens the guided form instead of
+        # printing usage — clicking people beats getting the @mentions right.
+        try:
+            client.views_open(trigger_id=command["trigger_id"],
+                              view=build_log_modal(caller, command.get("channel_id", "")))
+        except Exception as e:
+            (logger or log).warning("views_open failed: %s", e)
+            respond(":warning: Couldn't open the form — type it instead: "
+                    "`/tt log @opponent 11-7 9-11 11-5`")
+        return
+
     try:
         parsed = parsing.parse_match(rest, caller=caller, bot_id=bot_id)
     except parsing.ParseError as e:
         respond(f":warning: {e}")
         return
 
-    record = store.create_pending(parsed["side_a"], parsed["side_b"], parsed["games"],
-                                  logged_by=caller, channel=command.get("channel_id"))
+    error = submit_match(parsed["side_a"], parsed["side_b"], parsed["games"], caller,
+                         command["channel_id"], client, bot_id=bot_id, logger=logger)
+    if error:
+        respond(error)
+
+
+# --- the guided form -------------------------------------------------------
+
+LOG_MODAL = "tt_log_modal"
+
+
+def _users_block(block_id, label, hint=None, initial=None):
+    element = {"type": "multi_users_select", "action_id": "v", "max_selected_items": 2,
+               "placeholder": {"type": "plain_text", "text": "Pick one, or two for doubles"}}
+    if initial:
+        element["initial_users"] = initial
+    block = {"type": "input", "block_id": block_id, "element": element,
+             "label": {"type": "plain_text", "text": label}}
+    if hint:
+        block["hint"] = {"type": "plain_text", "text": hint}
+    return block
+
+
+def build_log_modal(caller="", channel_id=""):
+    """The form behind a bare `/tt log`.
+
+    No singles/doubles switch: one name a side is singles, two is doubles, and
+    the pickers already say which. channel_id rides in private_metadata so the
+    submission knows where the match message belongs.
+    """
+    return {
+        "type": "modal",
+        "callback_id": LOG_MODAL,
+        "private_metadata": channel_id or "",
+        "title": {"type": "plain_text", "text": "Log a match"},
+        "submit": {"type": "plain_text", "text": "Log it"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            _users_block("side_a", "Your side", initial=[caller] if caller else None,
+                         hint="Add a partner for doubles."),
+            _users_block("side_b", "Opponents"),
+            {"type": "input", "block_id": "games",
+             "label": {"type": "plain_text", "text": "Game scores"},
+             "hint": {"type": "plain_text",
+                      "text": "The points in each game, your side first."},
+             "element": {"type": "plain_text_input", "action_id": "v",
+                         "placeholder": {"type": "plain_text", "text": "11-7  9-11  11-5"}}},
+        ],
+    }
+
+
+def _modal_value(state, block, key="value"):
+    """One field's value from a modal's state, whatever its action_id."""
+    inner = next(iter(state.get(block, {}).values()), {})
+    return inner.get(key)
+
+
+def handle_log_modal(ack, body, view, client=None, logger=None):
+    """Validate the form in place, then hand off to the same path as the typed
+    command. Errors come back attached to their field rather than as a message
+    after the modal has closed, so a typo is one correction, not a retype."""
+    state = view["state"]["values"]
+    side_a = _modal_value(state, "side_a", "selected_users") or []
+    side_b = _modal_value(state, "side_b", "selected_users") or []
+    caller = body["user"]["id"]
+
+    errors = {}
     try:
-        # Posted rather than `respond`ed so a confirmation hours later can still
-        # edit it: a slash command's response_url expires after 30 minutes.
-        resp = client.chat_postMessage(
-            channel=command["channel_id"], blocks=pending_blocks(record),
-            text=f"Match logged by <@{caller}> — needs confirming.")
-    except Exception as e:
-        # Almost always not_in_channel. Drop the pending rather than leave one
-        # nobody can see, let alone confirm.
-        store.drop_pending(record["id"])
-        (logger or log).warning("could not post pending match: %s", e)
-        respond(f":warning: I couldn't post in this channel — invite me first with "
-                f"`/invite <@{bot_id}>` and log it again." if bot_id else
-                ":warning: I couldn't post in this channel — invite me here and try again.")
+        games = parsing.parse_games(_modal_value(state, "games") or "")
+    except parsing.ParseError as e:
+        errors["games"] = str(e)
+        games = []
+    try:
+        parsing.validate_sides(side_a, side_b)
+    except parsing.ParseError as e:
+        # Side errors are about the pair of pickers; pin them to the second one,
+        # which is the one being filled in when the mistake is usually made.
+        errors["side_b"] = str(e)
+    if errors:
+        ack(response_action="errors", errors=errors)
         return
-    store.set_pending_message(record["id"], resp["channel"], resp["ts"])
+
+    ack()  # close the form
+    error = submit_match(side_a, side_b, games, caller, view.get("private_metadata") or caller,
+                         client, logger=logger)
+    if error:
+        # The modal is gone by now, so there is nothing to attach this to.
+        _dm(client, caller, error, logger=logger)
 
 
 def handle_confirm(body, client, respond, logger=None):
@@ -288,6 +403,96 @@ def handle_register(command, respond):
     player = store.get_player(uid) or store.new_player()
     respond(f":information_source: You're already on the ladder at *{player['rating']}*. "
             "`/tt me` for the full card.")
+
+
+WELCOME = (
+    ":table_tennis_paddle_and_ball: Welcome to the table tennis ladder, <@{uid}> — "
+    f"you're in at *{elo.START_RATING}*.\n\n"
+    "Log a match with `/tt log @opponent 11-7 9-11 11-5` — that's the points in "
+    "each game. Your opponent confirms it, and both ratings move.\n\n"
+    "`/tt board` for the ladder  ·  `/tt me` for your card  ·  `/tt help` for the rest."
+)
+
+
+def handle_member_joined(event, client=None, context=None, logger=None):
+    """Put anyone who joins the ladder's home channel on the ladder.
+
+    Scoped to HOME_CHANNEL rather than every channel the bot sits in: being
+    invited somewhere busy for a single match shouldn't enrol that channel's
+    entire membership. `/tt sync` covers any other channel, explicitly.
+
+    Safe against Slack's event retries — ensure_players only reports genuinely
+    new uids, so a redelivery can't produce a second welcome DM.
+    """
+    if not HOME_CHANNEL or event.get("channel") != HOME_CHANNEL:
+        return
+    uid = event.get("user")
+    if not uid or uid == (context or {}).get("bot_user_id"):
+        return  # the bot being invited is not a new player
+    if not kv.kv_available():
+        (logger or log).warning("member_joined_channel with no KV configured")
+        return
+    if not store.ensure_players([uid]):
+        return  # already on the ladder; someone re-joining is not news
+    _dm(client, uid, WELCOME.format(uid=uid), logger=logger)
+
+
+def _dm(client, uid, text, logger=None):
+    """A DM is the quiet way to welcome someone — the channel doesn't need to
+    watch every join, but the new player does need to know how to log a match."""
+    if client is None:
+        return
+    try:
+        client.chat_postMessage(channel=uid, text=text)
+    except Exception as e:
+        (logger or log).warning("welcome DM to %s failed: %s", uid, e)
+
+
+def channel_members(client, channel, limit=SYNC_LIMIT):
+    """Every member of a channel, following Slack's cursor pagination."""
+    members, cursor = [], None
+    while len(members) < limit:
+        resp = client.conversations_members(channel=channel, limit=200, cursor=cursor)
+        members += resp.get("members") or []
+        cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+        if not cursor:
+            break
+    return members[:limit]
+
+
+def handle_sync(command, respond, client, context=None, logger=None):
+    """`/tt sync` — put everyone already in *this* channel on the ladder.
+
+    Auto-registration only catches people who join from now on, so without this
+    the ladder starts empty in a channel that's been running for months. Acts on
+    the channel it was run in rather than HOME_CHANNEL, so the one command that
+    enrols people in bulk always names its target explicitly.
+    """
+    channel = command.get("channel_id")
+    try:
+        members = channel_members(client, channel)
+    except Exception as e:
+        (logger or log).warning("conversations.members failed: %s", e)
+        respond(":warning: I couldn't read this channel's members. Invite me here "
+                f"with `/invite <@{(context or {}).get('bot_user_id', 'tt-ranker')}>`, "
+                "and check the app has the `channels:read` scope (it needs a reinstall "
+                f"after adding one).\n_Slack said: `{e}`_")
+        return
+
+    bot_id = (context or {}).get("bot_user_id")
+    fresh = store.ensure_players([u for u in members if u != bot_id])
+    if not fresh:
+        respond(f":information_source: Everyone here is already on the ladder "
+                f"({len(members) - (1 if bot_id in members else 0)} players).")
+        return
+    named = " ".join(f"<@{u}>" for u in fresh[:15])
+    more = f" _…and {len(fresh) - 15} more._" if len(fresh) > 15 else ""
+    lines = [f":table_tennis_paddle_and_ball: Added *{len(fresh)}* "
+             f"player{'s' if len(fresh) != 1 else ''} to the ladder at "
+             f"*{elo.START_RATING}*.", f"{named}{more}"]
+    if channel == HOME_CHANNEL:
+        lines.append("\n_Anyone who joins this channel from now on is added automatically._")
+    respond("\n".join(lines))
 
 
 def handle_me(command, respond, bot_id=None):
@@ -444,19 +649,20 @@ def handle_odds(command, respond, bot_id=None):
 
 HELP = f""":table_tennis_paddle_and_ball: *TT Ranker* — the office table tennis ladder.
 
-*Log a match* (scores are the points in each game)
+*Log a match*
+• `/tt log` — opens a form: pick the players, type the scores
 • `/tt log @bob 11-7 9-11 11-5` — singles, you vs Bob
 • `/tt log @partner vs @dan @eve 11-7 11-9` — doubles
 • `/tt log @ann @bob vs @cal @dee 11-7 11-9` — record someone else's match
 
-The other side confirms it, then ratings move. Unconfirmed matches apply on \
-their own after {store.AUTO_CONFIRM_HOURS}h.
+Scores are the points in each game. The other side confirms it, then ratings \
+move. Unconfirmed matches apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 
 *Everything else*
 • `/tt board` — the ladder      • `/tt me [@player]` — one player's card
 • `/tt history [@player]` — recent results    • `/tt pending` — awaiting confirmation
 • `/tt odds @bob` — who's favoured    • `/tt undo` — revert the last match you logged
-• `/tt register` — join early (playing a match registers you anyway)
+• `/tt register` — join early    • `/tt sync` — add everyone in this channel
 
 *How the rating works*
 Everyone starts at *{elo.START_RATING}*. A match moves you by \
@@ -498,6 +704,8 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_undo(command, respond)
         elif sub == "odds":
             handle_odds(command, respond, bot_id)
+        elif sub == "sync":
+            handle_sync(command, respond, client, context, logger=logger)
         else:
             respond(HELP)
     except Exception:
@@ -527,6 +735,8 @@ def build_app(process_before_response=False, token_verification=True):
     app.command("/tt")(handle_tt_command)
     app.action(CONFIRM_ACTION)(_wrap_action(handle_confirm))
     app.action(DISPUTE_ACTION)(_wrap_action(handle_dispute))
+    app.view(LOG_MODAL)(handle_log_modal)
+    app.event("member_joined_channel")(handle_member_joined)
     return app
 
 

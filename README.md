@@ -31,6 +31,7 @@ Everything is one slash command, `/tt`.
 
 | Command | What it does |
 |---|---|
+| **`/tt log`** | **Opens a form — pick the players, type the scores** |
 | `/tt log @bob 11-7 9-11 11-5` | Log a singles match — you against Bob |
 | `/tt log @partner vs @dan @eve 11-7 11-9` | Doubles. `vs` splits the sides |
 | `/tt log @ann @bob vs @cal @dee 11-7 11-9` | Record a match you weren't in |
@@ -41,7 +42,33 @@ Everything is one slash command, `/tt`.
 | `/tt odds @bob` | Who's favoured, before you play |
 | `/tt undo` | Roll back the last match *you* logged |
 | `/tt register` | Join early (playing a match registers you anyway) |
+| `/tt sync` | Put everyone already in this channel on the ladder |
 | `/tt help` | All of the above, in Slack |
+
+### The form
+
+`/tt log` on its own opens a modal: a people picker for your side (you're
+pre-selected), one for your opponents, and a box for the scores.
+
+```
+┌─ Log a match ─────────────────────────────┐
+│  Your side        [ @you            ▾ ]   │
+│  Add a partner for doubles.               │
+│                                           │
+│  Opponents        [ @bob            ▾ ]   │
+│                                           │
+│  Game scores                              │
+│  [ 11-7  9-11  11-5                   ]   │
+│  The points in each game, your side first.│
+│                                           │
+│                    [ Cancel ]  [ Log it ] │
+└───────────────────────────────────────────┘
+```
+
+There's no singles/doubles switch — one name a side is singles, two is doubles.
+Mistakes come back attached to the field that's wrong, so a typo is one
+correction rather than retyping the whole thing. Both routes run the same
+validation and end at the same confirmation prompt.
 
 Scores are **the points in each game**, one per game: `11-7 9-11 11-5` is a
 best-of-five won 2–1. Games to 21 work fine. `11 - 7`, `11:7` and `11–7` are all
@@ -61,6 +88,28 @@ is the person it costs.
 
 In doubles, either opponent can confirm. If a bystander logged the match, any of
 the four players can.
+
+### Joining
+
+**Anyone who joins `TT_CHANNEL` is put on the ladder automatically** and gets a
+DM explaining how to log a match. Nobody has to know the bot exists to end up on
+it.
+
+Deliberately scoped to that one channel rather than every channel the bot sits
+in — being invited somewhere busy for a single match shouldn't enrol that
+channel's entire membership.
+
+Two things it doesn't cover, both handled by **`/tt sync`**:
+
+- people who were already in the channel before the bot arrived
+- any *other* channel where matches get played
+
+`/tt sync` acts on the channel you run it in, which is why the one command that
+enrols people in bulk always names its target explicitly. It's idempotent and
+doesn't DM anyone — run it as often as you like.
+
+You can still `/tt register` yourself, and simply playing a match registers
+everyone in it.
 
 ---
 
@@ -277,12 +326,12 @@ Slack ──▶ /slack/events ──▶ api/index.py (Flask on Vercel)
 | [elo.py](elo.py) | The rating maths. Pure functions, no I/O — everything above is here. |
 | [parsing.py](parsing.py) | `/tt` grammar: mentions, the `vs` separator, scores, validation. |
 | [store.py](store.py) | Persistence: players, the pending queue, applying a match, undo. |
-| [bot.py](bot.py) | Slack handlers, message blocks, who is allowed to confirm. |
+| [bot.py](bot.py) | Slack handlers, the log form, message blocks, who may confirm. |
 | [standings.py](standings.py) | Weekly standings post and the daily auto-confirm sweep. |
 | [kv.py](kv.py) | Minimal Upstash Redis REST client, with pipelining. |
 | [api/index.py](api/index.py) | Vercel entry point; also serves `/debug` and `/cron/*`. |
 | [socket_mode.py](socket_mode.py) | Socket Mode entry point for local dev (no public URL). |
-| [manifest.yaml](manifest.yaml) | Slack app manifest (scopes, command, interactivity). |
+| [manifest.yaml](manifest.yaml) | Slack app manifest (scopes, command, events, interactivity). |
 
 **Two rules the rest of the code depends on**
 
@@ -343,7 +392,7 @@ Import the repo, then set under **Settings → Environment Variables**:
 | `SLACK_BOT_TOKEN` | always |
 | `SLACK_SIGNING_SECRET` | always — verifies requests really came from Slack |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | always — set by the Upstash integration |
-| `TT_CHANNEL` | the weekly standings post |
+| `TT_CHANNEL` | the ladder's home channel — weekly standings land here, and joining it registers you |
 | `CRON_SECRET` | authenticates `/cron/*`; Vercel sends it automatically once set |
 
 Deploy. `vercel.json` rewrites every path to `api/index.py` and registers both
@@ -355,11 +404,24 @@ Back in the Slack app, replace the three placeholder URLs with your deployment:
 
 - **Slash Commands** → `/tt` → `https://<your-app>.vercel.app/slack/events`
 - **Interactivity & Shortcuts** → on → same URL
-  (this one is required — the Confirm buttons don't work without it)
+  (required — the Confirm buttons and the log form don't work without it)
+- **Event Subscriptions** → on → same URL, and subscribe the bot to
+  **`member_joined_channel`**
+  (required for auto-registration; Slack verifies the URL when you save)
 
 Then invite the bot wherever people will log matches: `/invite @tt-ranker`. With
 `chat:write.public` it can post in public channels uninvited, but inviting it is
 tidier and it's required in private channels.
+
+Finally, run **`/tt sync`** in the channel to put everyone already there on the
+ladder — auto-registration only catches people who join from now on.
+
+> **Upgrading an existing install?** `channels:read`, `groups:read` and the
+> `member_joined_channel` subscription were added after the first release.
+> Slack does not grant new scopes to an app that's already installed — go to
+> **OAuth & Permissions → Reinstall to Workspace**. Until you do, `/tt sync`
+> reports a missing scope and nobody is auto-registered; everything else keeps
+> working.
 
 ### 5. Check it
 
