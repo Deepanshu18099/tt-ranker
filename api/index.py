@@ -104,6 +104,45 @@ def _run_cron(fn):
         return {"error": traceback.format_exc().splitlines()[-1]}, 500
 
 
+def _render_ladder():
+    """The public ladder page — the link that goes in the channel topic.
+
+    Read-only and unauthenticated by design: it holds display names and ratings,
+    nothing that isn't already visible to anyone in the Slack channel.
+    """
+    import kv
+    if not kv.kv_available():
+        return "<p>No database configured yet.</p>", 503, {"Content-Type": "text/html"}
+    import bot
+    import page
+    import store
+
+    try:
+        # Opportunistic and best-effort: if users:read isn't granted this is a
+        # no-op and the page falls back to names slash commands have revealed.
+        if _init_error is None:
+            bot.refresh_names(bolt_app.client, logger=log)
+    except Exception:
+        log.exception("name refresh failed; rendering with what we have")
+
+    players = store.all_players()
+    week_delta, week_played = store.week_movement()
+    body = page.render(
+        players=players,
+        names=store.names(),
+        recent=store.recent_matches(limit=8),
+        week_delta=week_delta,
+        week_played=week_played,
+        placement_games=bot.PLACEMENT_GAMES,
+        channel_hint=os.environ.get("TT_CHANNEL_NAME", ""),
+        updated=store.now_ist().strftime("%H:%M IST"),
+    )
+    # Let a CDN hold it briefly so a channel-wide click doesn't become a
+    # thundering herd, while staying fresh enough to feel live.
+    return body, 200, {"Content-Type": "text/html; charset=utf-8",
+                       "Cache-Control": "public, max-age=15, stale-while-revalidate=60"}
+
+
 @app.route("/", defaults={"subpath": ""}, methods=["GET", "POST"])
 @app.route("/<path:subpath>", methods=["GET", "POST"])
 def route(subpath):
@@ -131,6 +170,9 @@ def route(subpath):
 
     if tail.endswith("/cron/sweep"):
         return _run_cron(lambda s, client, dry: s.sweep_pending(client, dry_run=dry))
+
+    if tail.endswith("/ladder"):
+        return _render_ladder()
 
     if tail.endswith("/debug"):
         return _debug_payload(tail)

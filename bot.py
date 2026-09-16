@@ -635,6 +635,74 @@ def _settle_everywhere(client, record, blocks, fallback, body=None, respond=None
 
 # --- read-only subcommands -------------------------------------------------
 
+NAME_ASK = ("*What should the ladder call you?* Set it once with "
+            "`/tt name Your Name` — it's what shows on the web ladder, which "
+            "can't render Slack mentions.")
+
+
+def handle_name(command, respond):
+    """`/tt name [what to call me]` — how you appear on the web ladder."""
+    uid = command["user_id"]
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    wanted = " ".join(rest.split())
+
+    if not wanted:
+        current = store.chosen_names().get(uid)
+        if current:
+            respond(f":label: You're *{current}* on the ladder. "
+                    "`/tt name Something Else` to change it.")
+        else:
+            respond(f":label: You haven't set a name yet. {NAME_ASK}")
+        return
+    if wanted.lower() in ("clear", "reset", "none"):
+        store.clear_name(uid)
+        respond(":label: Cleared. The ladder will fall back to your Slack name.")
+        return
+    saved = store.set_name(uid, wanted)
+    url = ladder_url()
+    where = f" — <{url}|see it>." if url else "."
+    respond(f":label: You're *{saved}* on the ladder now{where}")
+
+
+def ladder_url():
+    """Where the public ladder lives, if the deployment knows its own address."""
+    base = os.environ.get("TT_PUBLIC_URL") or os.environ.get("VERCEL_URL", "")
+    if not base:
+        return ""
+    if not base.startswith("http"):
+        base = f"https://{base}"
+    return f"{base.rstrip('/')}/ladder"
+
+
+def unnamed_players():
+    """Registered players who haven't chosen a name — who `/tt nudge` asks."""
+    chosen = store.chosen_names()
+    return sorted(uid for uid in store.all_players() if uid not in chosen)
+
+
+def handle_nudge(command, respond, client, logger=None):
+    """`/tt nudge` — ask everyone still unnamed to set one. Admins only: it DMs
+    a lot of people at once, which is not something any player should be able to
+    trigger on the rest of the office."""
+    if not is_admin(command.get("user_id")):
+        respond(":lock: Only an admin can send that to everyone. "
+                "You can set your own with `/tt name Your Name`.")
+        return
+    missing = unnamed_players()
+    if not missing:
+        respond(":white_check_mark: Everyone on the ladder has chosen a name.")
+        return
+    sent = 0
+    for uid in missing:
+        try:
+            client.chat_postMessage(channel=uid, text=NAME_ASK)
+            sent += 1
+        except Exception as e:
+            (logger or log).warning("name nudge to %s failed: %s", uid, e)
+    respond(f":wave: Asked *{sent}* of {len(missing)} to set a name."
+            + ("" if sent == len(missing) else " The rest have app DMs turned off."))
+
+
 def handle_register(command, respond):
     uid = command["user_id"]
     fresh = store.ensure_players([uid])
@@ -652,6 +720,8 @@ WELCOME = (
     f"you're in at *{elo.START_RATING}*.\n\n"
     "Log a match with `/tt log @opponent 11-7 9-11 11-5` — that's the points in "
     "each game. Your opponent confirms it, and both ratings move.\n\n"
+    "One thing first: `/tt name Your Name` sets how you appear on the ladder "
+    "page. Slack mentions don't render there.\n\n"
     "`/tt board` for the ladder  ·  `/tt me` for your card  ·  `/tt help` for the rest."
 )
 
@@ -1028,7 +1098,7 @@ results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 • `/tt history [@player]` — recent results    • `/tt pending` — awaiting confirmation
 • `/tt odds @bob` — who's favoured    • `/tt undo` — revert the last match you logged
 • `/tt register` — join early    • `/tt sync` — add everyone in this channel
-• `/tt intro` — post the how-it-works message, for pinning
+• `/tt name Your Name` — how you appear on the web ladder\n• `/tt intro` — post the how-it-works message, for pinning
 
 *How the rating works*
 Everyone starts at *{elo.START_RATING}*. *Every game is rated on its own and \
@@ -1044,10 +1114,45 @@ and join the ladder proper after {PLACEMENT_GAMES}. Full details: \
 
 # --- routing ---------------------------------------------------------------
 
+def refresh_names(client, logger=None):
+    """Top up the uid → display name map the web ladder reads from.
+
+    Needs `users:read`. Without it this is a no-op and the page falls back to
+    whatever names slash commands have happened to reveal, so the scope is worth
+    having but never required.
+    """
+    if not store.names_are_stale():
+        return 0
+    found, cursor = {}, None
+    try:
+        for _ in range(10):  # ~10k users; far past any workspace using this
+            resp = client.users_list(limit=1000, cursor=cursor)
+            for user in resp.get("members") or []:
+                if user.get("deleted") or user.get("is_bot"):
+                    continue
+                profile = user.get("profile") or {}
+                name = (profile.get("display_name") or profile.get("real_name")
+                        or user.get("name"))
+                if user.get("id") and name:
+                    found[user["id"]] = name
+            cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                break
+    except Exception as e:
+        (logger or log).info("users.list unavailable (%s) — names stay partial", e)
+        return 0
+    store.remember_names(found)
+    store.mark_names_fetched()
+    return len(found)
+
+
 def handle_tt_command(ack, command, respond, client=None, context=None, logger=None):
     ack()
     sub, _ = parsing.split_subcommand(command.get("text", ""))
     bot_id = (context or {}).get("bot_user_id")
+    # Slash commands carry the caller's Slack handle for free. Kept as a
+    # fallback only — whatever they set with /tt name always wins.
+    store.remember_handle(command.get("user_id"), command.get("user_name"))
 
     if sub == "help":
         respond(HELP)
@@ -1077,6 +1182,10 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_sync(command, respond, client, context, logger=logger)
         elif sub == "intro":
             handle_intro(command, respond, client, logger=logger)
+        elif sub == "name":
+            handle_name(command, respond)
+        elif sub == "nudge":
+            handle_nudge(command, respond, client, logger=logger)
         else:
             respond(HELP)
     except Exception:

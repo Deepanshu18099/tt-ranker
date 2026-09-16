@@ -1055,3 +1055,73 @@ def test_the_admin_list_is_capped(fake, client, admin, monkeypatch):
     respond = admin_pending(client)
     assert len([b for b in blocks_of(respond) if b["type"] == "actions"]) == 2
     assert "1 more" in said(respond)
+
+
+# --- choosing a name for the ladder ---------------------------------------
+
+def test_setting_a_name(fake, client):
+    assert "Sagnik" in said(run("name Sagnik", client))
+    assert store.chosen_names()[A] == "Sagnik"
+
+
+def test_a_chosen_name_beats_the_slack_handle(fake, client):
+    """The handle is a fallback; what someone asked to be called always wins."""
+    store.remember_handle(A, "praneat.data")
+    run("name Sagnik", client)
+    assert store.names()[A] == "Sagnik"
+
+
+def test_the_handle_is_kept_when_no_name_is_chosen(fake, client):
+    respond = MagicMock()
+    bot.handle_tt_command(MagicMock(),
+                          {"user_id": A, "user_name": "praneat.data", "text": "board",
+                           "channel_id": "C1", "trigger_id": "t"},
+                          respond, client=client, context={})
+    assert store.names()[A] == "praneat.data"
+
+
+def test_asking_what_your_name_is(fake, client):
+    assert "haven't set a name" in said(run("name", client))
+    run("name Sagnik", client)
+    assert "You're *Sagnik*" in said(run("name", client))
+
+
+def test_clearing_a_name(fake, client):
+    run("name Sagnik", client)
+    assert "Cleared" in said(run("name clear", client))
+    assert A not in store.chosen_names()
+
+
+def test_a_name_is_tidied_and_capped(fake, client):
+    run("name    Sagnik   the    Destroyer of Worlds and Several Bats", client)
+    saved = store.chosen_names()[A]
+    assert len(saved) <= store.MAX_NAME and "  " not in saved
+
+
+def test_nudging_asks_everyone_without_a_name(fake, client, admin):
+    store.ensure_players([A, B, C])
+    store.set_name(B, "Vikash")
+    respond = run("nudge", client, user=ADMIN)
+    asked = {c.kwargs["channel"] for c in client.chat_postMessage.call_args_list}
+    assert asked == {A, C}                    # B already chose one
+    assert "Asked *2*" in said(respond)
+
+
+def test_only_an_admin_can_nudge_everyone(fake, client, admin):
+    store.ensure_players([A, B])
+    respond = run("nudge", client, user=B)
+    assert "Only an admin" in said(respond)
+    assert client.chat_postMessage.call_count == 0
+
+
+def test_nudging_when_everyone_is_named(fake, client, admin):
+    store.ensure_players([A])
+    store.set_name(A, "Sagnik")
+    assert "Everyone on the ladder has chosen" in said(run("nudge", client, user=ADMIN))
+
+
+def test_the_welcome_dm_asks_for_a_name(fake, client, monkeypatch):
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "C_TT")
+    bot.handle_member_joined({"channel": "C_TT", "user": B}, client=client,
+                             context={"bot_user_id": BOT})
+    assert "/tt name" in said(client.chat_postMessage)

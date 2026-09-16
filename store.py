@@ -406,6 +406,87 @@ def undo_match(blob):
 
 # --- weekly counters -------------------------------------------------------
 
+# --- display names ---------------------------------------------------------
+
+# Two tiers, because they mean different things. A handle is what Slack happened
+# to tell us; a name is what the player asked to be called. The player wins.
+NAMES_KEY = "tt:names"        # chosen with /tt name
+HANDLES_KEY = "tt:handles"    # picked up from whatever payload carried one
+NAMES_FETCHED_KEY = "tt:names:fetched"
+NAMES_TTL_SECONDS = 6 * 3600
+MAX_NAME = 32
+
+
+def set_name(uid, name):
+    """What this player asked to be called on the ladder. Returns the stored
+    value, or None if it was blank."""
+    name = " ".join((name or "").split())[:MAX_NAME]
+    if not (uid and name):
+        return None
+    kv.hset(NAMES_KEY, uid, name)
+    return name
+
+
+def clear_name(uid):
+    kv.hdel(NAMES_KEY, uid)
+
+
+def remember_handle(uid, handle):
+    """Note a name Slack volunteered. Never raises — it's a nicety, and must not
+    take down the command that happened to carry it."""
+    if not (uid and handle):
+        return
+    try:
+        kv.hset(HANDLES_KEY, uid, handle, nx=True)  # never overwrite a real one
+    except Exception:
+        pass
+
+
+def remember_names(mapping):
+    if mapping:
+        kv.hset_many(HANDLES_KEY, mapping)
+
+
+def chosen_names():
+    """Only the names people set themselves."""
+    try:
+        return kv.hgetall(NAMES_KEY) or {}
+    except Exception:
+        return {}
+
+
+def names():
+    """uid → best available name: what they chose, else what Slack offered."""
+    try:
+        merged = kv.hgetall(HANDLES_KEY) or {}
+    except Exception:
+        merged = {}
+    merged.update(chosen_names())
+    return merged
+
+
+def names_are_stale(now=None):
+    """True when the bulk name list is old enough to be worth refetching."""
+    try:
+        last = kv.get(NAMES_FETCHED_KEY)
+    except Exception:
+        return False
+    if not last:
+        return True
+    try:
+        return (now or now_ist()) - datetime.fromisoformat(last) > \
+            timedelta(seconds=NAMES_TTL_SECONDS)
+    except ValueError:
+        return True
+
+
+def mark_names_fetched(now=None):
+    try:
+        kv.set_(NAMES_FETCHED_KEY, stamp(now))
+    except Exception:
+        pass
+
+
 def week_movement(key=None, when=None):
     """({uid: rating delta}, {uid: matches played}) for a week, named either by
     its key or by any datetime inside it.

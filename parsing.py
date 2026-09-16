@@ -45,6 +45,8 @@ SUBCOMMANDS = {
     "odds": "odds", "predict": "odds", "chance": "odds",
     "sync": "sync", "backfill": "sync",
     "intro": "intro", "welcome": "intro", "rules": "intro", "howto": "intro",
+    "name": "name", "callme": "name", "rename": "name",
+    "nudge": "nudge", "askall": "nudge",
     # `form` and a bare `log` both open the guided modal.
     "form": "log", "new": "log",
     "help": "help", "h": "help", "usage": "help",

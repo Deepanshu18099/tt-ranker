@@ -52,6 +52,7 @@ Everything is one slash command, `/tt`.
 | `/tt undo` | Roll back the last session *you* logged |
 | `/tt register` | Join early (playing registers you anyway) |
 | `/tt sync` | Put everyone already in this channel on the ladder |
+| `/tt name Your Name` | How you appear on the web ladder |
 | `/tt intro` | Post the how-it-works message, for pinning |
 | `/tt help` | All of the above, in Slack |
 
@@ -488,6 +489,8 @@ Import the repo, then set under **Settings → Environment Variables**:
 | `TT_CHANNEL` | the ladder's home channel — weekly standings land here, and joining it registers you |
 | `CRON_SECRET` | authenticates `/cron/*`; Vercel sends it automatically once set |
 | `TT_ADMINS` | optional — ids who can record a result without confirmation |
+| `TT_PUBLIC_URL` | optional — your deployment URL, so the bot can link the ladder page |
+| `TT_CHANNEL_NAME` | optional — e.g. `#table-tennis`, shown on the ladder page |
 
 Deploy. `vercel.json` rewrites every path to `api/index.py` and registers both
 cron jobs. **Environment variable changes need a redeploy to take effect.**
@@ -579,3 +582,30 @@ real command construction, the real hash unflattening and the real pipelining.
 - The sweep's real wait is between 24 and 48 hours, since cron runs daily. The
   message promises "auto-confirms in 24h", which is the half that matters — it
   will never apply *sooner* than the window.
+
+---
+
+## The ladder page
+
+`https://<your-app>.vercel.app/ladder` — a live, public, read-only page. Put it in
+the channel topic so people can check where they stand without running a command.
+
+It answers one question, in this order: **did I move?** The rating is the loudest
+thing on the page, this week's change sits beside it, and your row is reachable
+without scrolling past a hero. Before anyone has qualified it counts down to the
+first ranked player instead of showing an empty table.
+
+No login and no secrets — it shows names and ratings, which everyone in the
+channel can already see. It refreshes itself every minute, but only while the tab
+is actually being looked at.
+
+**Names.** The page can't render a Slack mention, so it needs something to call
+people. Three tiers, best first:
+
+1. what they set with `/tt name Sagnik`
+2. the Slack handle their slash commands revealed
+3. the tail of their user id — a stub, and a visible prompt to set one
+
+`/tt nudge` (admins only) DMs everyone still on tier 2 or 3. New players are
+asked when they join.
+
