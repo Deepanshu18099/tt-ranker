@@ -35,7 +35,7 @@ Everything is one slash command, `/tt`.
 
 | Command | What it does |
 |---|---|
-| **`/tt log`** · **`+` menu → Log a table tennis session** | **Opens a form — pick the players, type the scores** |
+| **`/tt log`** · shortcuts menu → *Log a table tennis session* | **Opens a form — pick the players, type the scores** |
 | `/tt log @bob 11-7 9-11 11-5` | Log singles — you against Bob, any number of games |
 | `/tt log @partner vs @dan @eve 11-7 11-9` | Doubles. `vs` splits the sides |
 | `/tt log @ann @bob vs @cal @dee 11-7 11-9` | Record a session you weren't in |
@@ -55,8 +55,9 @@ Everything is one slash command, `/tt`.
 Two ways in, same form:
 
 - **`/tt log`** on its own
-- the **`+` / shortcuts menu** in the message composer → *Log a table tennis
-  session* — no syntax to remember at all
+- the **shortcuts menu** → *Log a table tennis session*. That's the `/` button at
+  the right of the message toolbar, or just type `/` in the message box and
+  search. (Not the `+` button — that one is files and workflows.)
 
 A people picker for your side (you're pre-selected), one for your opponents, and
 a box for the scores. Opened from the shortcuts menu it also asks which channel

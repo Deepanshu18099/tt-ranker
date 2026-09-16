@@ -475,10 +475,11 @@ No fixed match length. Two games at lunch, fifteen on a Friday — both count, \
 and the longer one counts for more.
 
 *2 · Log it*
-Easiest way: click the :heavy_plus_sign: next to the message box and pick \
-*Log a table tennis session*. Fill in the form, done — nothing to memorise.
+Easiest way: type `/tt log` and fill in the form — nothing to memorise. \
+(It's also in the shortcuts menu: the `/` button at the right of the message \
+toolbar, or just type `/` and search *table tennis*.)
 
-Or type it:
+Or type the whole thing:
 ```
 /tt log @opponent 11-7 9-11 11-5
 ```
@@ -776,7 +777,7 @@ HELP = f""":table_tennis_paddle_and_ball: *TT Ranker* — the office table tenni
 
 *Log a session*
 • `/tt log` — opens a form: pick the players, type the scores
-   (also in the :heavy_plus_sign: shortcuts menu next to the message box)
+   (also under the `/` shortcuts button next to the message box)
 • `/tt log @bob 11-7 9-11 11-5` — singles, you vs Bob
 • `/tt log @partner vs @dan @eve 11-7 11-9` — doubles
 • `/tt log @ann @bob vs @cal @dee 11-7 11-9` — record someone else's match
