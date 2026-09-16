@@ -145,13 +145,9 @@ def sweep_pending(client, now=None, dry_run=False, logger=None):
 
 
 def _update_original(client, blob, logger=None):
-    """Replace the prompt with the outcome, so the message doesn't keep offering
-    buttons for a match that has already been rated."""
-    channel, ts = blob.get("channel"), blob.get("ts")
-    if not (client and channel and ts):
+    """Replace every prompt with the outcome — the channel post and each verdict
+    DM — so nothing keeps offering buttons for a session already rated."""
+    if not client:
         return
-    try:
-        client.chat_update(channel=channel, ts=ts, blocks=bot.applied_blocks(blob),
-                           text="Match auto-confirmed.")
-    except Exception as e:
-        (logger or bot.log).warning("could not update auto-confirmed %s: %s", blob["id"], e)
+    bot._settle_everywhere(client, blob, bot.applied_blocks(blob),
+                           "Session auto-confirmed.", logger=logger)

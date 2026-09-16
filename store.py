@@ -179,6 +179,7 @@ def create_pending(side_a, side_b, games, logged_by, channel=None, now=None):
         "logged_at": stamp(now),
         "channel": channel or "",
         "ts": "",
+        "dms": {},   # uid -> [channel, ts] of that person's verdict prompt
     }
     kv.set_(pending_key(record["id"]), json.dumps(record), ex=PENDING_TTL_SECONDS)
     kv.sadd(PENDING_KEY, record["id"])
@@ -190,13 +191,18 @@ def get_pending(mid):
     return json.loads(raw) if raw else None
 
 
-def set_pending_message(mid, channel, ts):
-    """Remember where the confirmation prompt was posted, so a later confirm can
-    edit that same message instead of leaving a stale one with live buttons."""
+def attach_messages(mid, channel, ts, dms=None):
+    """Remember every place this session was announced — the channel post and
+    each verdict DM — so settling it can update all of them.
+
+    Without the DM locations, confirming would leave live buttons sitting in
+    other people's DMs for a session that is already decided.
+    """
     record = get_pending(mid)
     if not record:
         return None
     record["channel"], record["ts"] = channel or "", ts or ""
+    record["dms"] = dms or {}
     kv.set_(pending_key(mid), json.dumps(record), ex=PENDING_TTL_SECONDS)
     return record
 

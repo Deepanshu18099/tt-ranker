@@ -117,25 +117,72 @@ def scoreline(record, games_a, games_b, settled):
     return f":table_tennis_paddle_and_ball: *{winner}* beat *{loser}* — *{high}–{low}*"
 
 
+def _button(action_id, text, mid, style=None):
+    button = {"type": "button", "action_id": action_id, "value": mid,
+              "text": {"type": "plain_text", "text": text}}
+    if style:
+        button["style"] = style
+    return button
+
+
 def pending_blocks(record):
-    """The confirmation prompt: the claim, plus the buttons that settle it."""
+    """What the *channel* sees while a session waits — the claim and who owes a
+    verdict, with no buttons on it.
+
+    The verdict itself goes out as a DM (see verdict_blocks). Buttons sitting in
+    a channel invite everyone who can see them to press, and the ones who
+    shouldn't only find out they can't after clicking; the people whose rating is
+    actually at stake are the only ones who should be holding them at all.
+    """
     games_a, games_b, _, _ = elo.tally(record["games"])
     who = confirmers(record)
-    ask = (f"{fmt_side(who)} — confirm to lock in the rating change."
-           if who else "Waiting on confirmation.")
-    mid = record["id"]
+    ask = (f"Sent to {fmt_side(who)} to confirm." if who else "Waiting on confirmation.")
     return [
         _section(f"{scoreline(record, games_a, games_b, settled=False)}\n"
                  f"{fmt_games(record['games'])}"),
         _context(f"Logged by <@{record['logged_by']}> · {ask} "
-                 f"Auto-confirms in {store.AUTO_CONFIRM_HOURS}h."),
-        {"type": "actions", "block_id": f"tt_actions_{mid}", "elements": [
-            {"type": "button", "action_id": CONFIRM_ACTION, "style": "primary",
-             "text": {"type": "plain_text", "text": "✅  Confirm"}, "value": mid},
-            {"type": "button", "action_id": DISPUTE_ACTION,
-             "text": {"type": "plain_text", "text": "❌  That's wrong"}, "value": mid},
-        ]},
+                 f"Applies on its own in {store.AUTO_CONFIRM_HOURS}h."),
     ]
+
+
+def verdict_blocks(record, role):
+    """The DM that actually carries the buttons, cut to what this person may do.
+
+    role "confirm" is someone the result costs; "cancel" is the person who
+    logged it, for whom the only useful action is taking it back.
+    """
+    games_a, games_b, _, _ = elo.tally(record["games"])
+    mid = record["id"]
+    if role == "confirm":
+        head = (f"{scoreline(record, games_a, games_b, settled=False)}\n"
+                f"{fmt_games(record['games'])}")
+        note = (f"<@{record['logged_by']}> logged this. Is it right? "
+                f"Nothing moves until you say so — or on its own in "
+                f"{store.AUTO_CONFIRM_HOURS}h.")
+        buttons = [_button(CONFIRM_ACTION, "✅  Confirm", mid, style="primary"),
+                   _button(DISPUTE_ACTION, "❌  That's wrong", mid)]
+    else:
+        head = (f"{scoreline(record, games_a, games_b, settled=False)}\n"
+                f"{fmt_games(record['games'])}")
+        note = (f"Sent to {fmt_side(confirmers(record))} to confirm. "
+                "Logged it by mistake? Take it back before they get to it.")
+        buttons = [_button(DISPUTE_ACTION, "🗑  Cancel this", mid)]
+    return [_section(head), _context(note),
+            {"type": "actions", "block_id": f"tt_actions_{mid}", "elements": buttons}]
+
+
+def verdict_audience(record):
+    """{uid: role} — who gets a DM, and which buttons it carries.
+
+    Kept deliberately small: every entry is one more API call inside Slack's
+    3-second window. A partner of whoever logged it isn't messaged; they can see
+    the channel post and ask.
+    """
+    who = {uid: "confirm" for uid in confirmers(record)}
+    reporter = record.get("logged_by")
+    if reporter and reporter not in who:
+        who[reporter] = "cancel"
+    return who
 
 
 def applied_blocks(blob):
@@ -221,20 +268,45 @@ def submit_match(side_a, side_b, games, logged_by, channel, client, bot_id=None,
     if is_admin(logged_by):
         return _record_as_admin(record, logged_by, channel, client, bot_id, logger)
     try:
-        # Posted rather than `respond`ed so a confirmation hours later can still
+        # Posted rather than `respond`ed so a settlement hours later can still
         # edit it: a slash command's response_url expires after 30 minutes.
         resp = client.chat_postMessage(
             channel=channel, blocks=pending_blocks(record),
-            text=f"Match logged by <@{logged_by}> — needs confirming.")
+            text=f"Session logged by <@{logged_by}> — waiting on a verdict.")
     except Exception as e:
         # Almost always not_in_channel. Drop the pending rather than leave one
-        # nobody can see, let alone confirm.
+        # nobody can see, let alone settle.
         store.drop_pending(record["id"])
-        (logger or log).warning("could not post pending match: %s", e)
+        (logger or log).warning("could not post pending session: %s", e)
         invite = f" with `/invite <@{bot_id}>`" if bot_id else ""
         return f":warning: I couldn't post in that channel — invite me there{invite} and log it again."
-    store.set_pending_message(record["id"], resp["channel"], resp["ts"])
+
+    dms = _send_verdict_dms(record, client, logger=logger)
+    store.attach_messages(record["id"], resp["channel"], resp["ts"], dms)
+    if not any(role == "confirm" for uid, role in verdict_audience(record).items()
+               if uid in dms):
+        # Nobody who could confirm actually received the buttons. Say so rather
+        # than let it look logged and then quietly sit there until the sweep.
+        return (":warning: Logged, but I couldn't DM anyone to confirm it — they "
+                f"may have DMs from apps turned off. It'll apply on its own in "
+                f"{store.AUTO_CONFIRM_HOURS}h.")
     return None
+
+
+def _send_verdict_dms(record, client, logger=None):
+    """DM each person a verdict prompt. Returns {uid: [channel, ts]} for those
+    that landed, so they can all be updated when the session settles."""
+    dms = {}
+    for uid, role in verdict_audience(record).items():
+        try:
+            resp = client.chat_postMessage(
+                channel=uid, blocks=verdict_blocks(record, role),
+                text=f"Table tennis session #{record['id']} needs your verdict.")
+            dms[uid] = [resp["channel"], resp["ts"]]
+        except Exception as e:
+            # One unreachable person must not stop the others being asked.
+            (logger or log).warning("verdict DM to %s failed: %s", uid, e)
+    return dms
 
 
 def _record_as_admin(record, admin, channel, client, bot_id=None, logger=None):
@@ -460,8 +532,8 @@ def handle_confirm(body, client, respond, logger=None):
         (logger or log).exception("applying match %s failed", mid)
         _only_you(respond, ":x: Something went wrong rating that match — try again in a moment.")
         return
-    _replace(body, client, respond, applied_blocks(blob),
-             fallback="Match confirmed.", logger=logger)
+    _settle_everywhere(client, blob, applied_blocks(blob), "Session confirmed.",
+                       body=body, respond=respond, logger=logger)
 
 
 def handle_dispute(body, client, respond, logger=None):
@@ -482,21 +554,47 @@ def handle_dispute(body, client, respond, logger=None):
         _context(f"Thrown out by <@{user}> — no ratings changed. "
                  "Log it again with the right scores."),
     ]
-    _replace(body, client, respond, blocks, fallback="Match discarded.", logger=logger)
+    _settle_everywhere(client, record, blocks, "Session discarded.",
+                       body=body, respond=respond, logger=logger)
 
 
 def _action_value(body):
     return (body.get("actions") or [{}])[0].get("value", "")
 
 
-def _replace(body, client, respond, blocks, fallback, logger=None):
-    """Swap the prompt for the outcome, so no message is left showing live
-    buttons for a match that is already settled.
+def _settle_everywhere(client, record, blocks, fallback, body=None, respond=None,
+                       logger=None):
+    """Show the outcome in every place this session was announced.
 
-    chat_update first because it keeps working indefinitely; response_url is the
-    fallback for the case where the bot has since lost access to the channel.
+    A session now lives in several messages — the channel post plus one DM per
+    person who could act — so updating only the one that was clicked would leave
+    live buttons in the others for something already decided. Each is updated
+    independently; one failure must not stop the rest.
     """
-    container = body.get("container") or {}
+    seen = set()
+    targets = []
+    if record.get("channel") and record.get("ts"):
+        targets.append((record["channel"], record["ts"]))
+    for loc in (record.get("dms") or {}).values():
+        if isinstance(loc, (list, tuple)) and len(loc) == 2:
+            targets.append((loc[0], loc[1]))
+
+    updated = 0
+    for channel, ts in targets:
+        if (channel, ts) in seen:
+            continue
+        seen.add((channel, ts))
+        try:
+            client.chat_update(channel=channel, ts=ts, blocks=blocks, text=fallback)
+            updated += 1
+        except Exception as e:
+            (logger or log).warning("chat_update %s/%s failed: %s", channel, ts, e)
+
+    if updated:
+        return
+    # Nothing on record (an older session, or every update failed) — fall back to
+    # editing whichever message the press came from.
+    container = (body or {}).get("container") or {}
     channel, ts = container.get("channel_id"), container.get("message_ts")
     if client is not None and channel and ts:
         try:
@@ -504,7 +602,8 @@ def _replace(body, client, respond, blocks, fallback, logger=None):
             return
         except Exception as e:
             (logger or log).warning("chat_update failed, falling back to respond: %s", e)
-    respond(replace_original=True, blocks=blocks, text=fallback)
+    if respond is not None:
+        respond(replace_original=True, blocks=blocks, text=fallback)
 
 
 # --- read-only subcommands -------------------------------------------------
@@ -552,10 +651,11 @@ That's the points in each game, one per game. \
 Doubles: `/tt log @partner vs @dan @eve 11-7 11-9`
 
 *3 · The other side confirms*
-Your opponent gets a :white_check_mark: button. Nothing moves until they press \
-it — you can't wave through your own result. Wrong scores? They press \
-:x: and you log it again. Ignored for {store.AUTO_CONFIRM_HOURS}h, it applies \
-on its own.
+I DM your opponent the buttons — the channel just sees the claim, so nobody \
+who wasn't playing can rule on it. Nothing moves until they press \
+:white_check_mark:; you can't wave through your own result. Wrong scores? They \
+press :x: and you log it again. Ignored for {store.AUTO_CONFIRM_HOURS}h, it \
+applies on its own.
 
 *What moves your rating*
 • Beating someone above you is worth a lot. Beating someone below you, very little.

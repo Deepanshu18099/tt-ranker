@@ -1,4 +1,5 @@
 """The whole loop through the Slack handlers: log → confirm → rating moves."""
+import itertools
 import json
 from datetime import timedelta
 from unittest.mock import MagicMock
@@ -24,8 +25,13 @@ def fake():
 
 @pytest.fixture
 def client():
+    """Echoes back the channel it was posted to, so a channel post and each
+    verdict DM are distinguishable. (Real Slack returns a D-id for a DM rather
+    than the user id; the code stores whatever comes back either way.)"""
     c = MagicMock()
-    c.chat_postMessage.return_value = {"channel": "C1", "ts": "1700000000.1"}
+    counter = itertools.count(1)
+    c.chat_postMessage.side_effect = lambda **kw: {
+        "channel": kw.get("channel", "C1"), "ts": f"1700000000.{next(counter)}"}
     return c
 
 
@@ -62,11 +68,42 @@ def said(mock):
     return "\n".join(parts)
 
 
+def posts(client):
+    return client.chat_postMessage.call_args_list
+
+
+def channel_post(client):
+    """The most recent message that went to a channel, not a verdict DM."""
+    for c in reversed(posts(client)):
+        if str(c.kwargs.get("channel", "")).startswith("C"):
+            return c
+    return None
+
+
+def dm_to(client, uid):
+    """The most recent verdict DM sent to one person, or None."""
+    for c in reversed(posts(client)):
+        if c.kwargs.get("channel") == uid:
+            return c
+    return None
+
+
+def buttons_in(call):
+    if call is None:
+        return []
+    for b in call.kwargs.get("blocks") or []:
+        if b.get("type") == "actions":
+            return [e["action_id"] for e in b["elements"]]
+    return []
+
+
 def posted_mid(client):
-    """The pending id carried by the buttons on the message just posted."""
-    blocks = client.chat_postMessage.call_args.kwargs["blocks"]
-    actions = next(b for b in blocks if b["type"] == "actions")
-    return actions["elements"][0]["value"]
+    """The pending id on the most recently posted message carrying buttons."""
+    for c in reversed(posts(client)):
+        for b in c.kwargs.get("blocks") or []:
+            if b.get("type") == "actions":
+                return b["elements"][0]["value"]
+    raise AssertionError("no message carried buttons")
 
 
 # --- logging ---------------------------------------------------------------
@@ -80,9 +117,9 @@ def test_logging_posts_a_prompt_and_moves_nothing_yet(fake, client):
     assert fake.data.get(store.player_key(A)) is None  # nobody rated yet
 
 
-def test_the_prompt_names_who_has_to_confirm(fake, client):
+def test_the_channel_post_names_who_the_verdict_went_to(fake, client):
     run(f"log <@{B}> 11-7 11-9", client)
-    assert f"<@{B}> — confirm" in said(client.chat_postMessage)
+    assert f"Sent to <@{B}> to confirm" in said(client.chat_postMessage)
 
 
 def test_a_bad_command_explains_itself_privately(fake, client):
@@ -627,7 +664,7 @@ def test_a_session_logged_from_the_shortcut_posts_to_the_chosen_channel(fake, cl
     state = form_state([A], [B], "11-7 9-11 11-5")
     state["channel"] = {"v": {"selected_conversation": "C_PICKED"}}
     submit(state, client, channel="")           # no private_metadata, as a shortcut
-    assert client.chat_postMessage.call_args.kwargs["channel"] == "C_PICKED"
+    assert channel_post(client).kwargs["channel"] == "C_PICKED"
     assert store.get_pending(posted_mid(client))["side_b"] == [B]
 
 
@@ -704,7 +741,10 @@ def test_settling_the_match_still_replaces_the_prompt(fake, client):
     """The guard must not have broken the case that *should* edit the message."""
     run(f"log <@{B}> 11-7", client)
     press(bot.handle_confirm, posted_mid(client), B, client)
-    assert client.chat_update.call_count == 1
+    edited = {c.kwargs["channel"] for c in client.chat_update.call_args_list}
+    assert "C1" in edited                      # the channel post became the result
+    assert all(not any(b["type"] == "actions" for b in c.kwargs["blocks"])
+               for c in client.chat_update.call_args_list)
 
 
 # --- admin: record a result with no confirmation --------------------------
@@ -801,3 +841,113 @@ def test_an_admin_can_record_a_session_between_two_other_people(fake, client, ad
     assert store.list_pending() == []
     assert fake.rating(A) > elo.START_RATING > fake.rating(B)
     assert fake.data.get(store.player_key(ADMIN)) is None   # not a player here
+
+
+# --- the verdict goes to the people it costs, not the channel -------------
+
+def test_the_channel_post_carries_no_buttons(fake, client):
+    """Buttons in a channel invite everyone who can see them to press, and the
+    ones who shouldn't only find out after clicking."""
+    run(f"log <@{B}> 11-7 9-11 11-5", client)
+    assert buttons_in(channel_post(client)) == []
+    assert f"<@{A}>" in said(client.chat_postMessage)       # still shows the claim
+    assert "11-7" in said(client.chat_postMessage)
+
+
+def test_the_opponent_gets_the_buttons_by_dm(fake, client):
+    run(f"log <@{B}> 11-7 11-9", client)
+    assert buttons_in(dm_to(client, B)) == [bot.CONFIRM_ACTION, bot.DISPUTE_ACTION]
+
+
+def test_the_logger_gets_a_cancel_only_dm(fake, client):
+    """Their mistake to take back, but not their result to wave through."""
+    run(f"log <@{B}> 11-7", client)
+    assert buttons_in(dm_to(client, A)) == [bot.DISPUTE_ACTION]
+    assert "Cancel" in said(client.chat_postMessage)
+
+
+def test_nobody_else_is_messaged(fake, client):
+    run(f"log <@{B}> 11-7", client)
+    assert dm_to(client, C) is None and dm_to(client, D) is None
+
+
+def test_both_opponents_get_asked_in_doubles(fake, client):
+    run(f"log <@{B}> vs <@{C}> <@{D}> 11-7 11-9", client)
+    assert buttons_in(dm_to(client, C)) == [bot.CONFIRM_ACTION, bot.DISPUTE_ACTION]
+    assert buttons_in(dm_to(client, D)) == [bot.CONFIRM_ACTION, bot.DISPUTE_ACTION]
+    assert dm_to(client, B) is None          # the logger's partner is not asked
+
+
+def test_the_dm_locations_are_remembered(fake, client):
+    run(f"log <@{B}> 11-7", client)
+    record = store.get_pending(posted_mid(client))
+    assert set(record["dms"]) == {A, B}
+    assert all(len(loc) == 2 for loc in record["dms"].values())
+
+
+def test_confirming_updates_the_channel_and_every_dm(fake, client):
+    """Otherwise live buttons sit in someone's DM for a settled session."""
+    run(f"log <@{B}> vs <@{C}> <@{D}> 11-7 11-9", client)
+    press(bot.handle_confirm, posted_mid(client), C, client)
+
+    updated = {c.kwargs["channel"] for c in client.chat_update.call_args_list}
+    assert updated == {"C1", A, C, D}        # channel + logger + both opponents
+    for call in client.chat_update.call_args_list:
+        assert not any(b["type"] == "actions" for b in call.kwargs["blocks"])
+
+
+def test_disputing_updates_the_channel_and_every_dm(fake, client):
+    run(f"log <@{B}> 11-7", client)
+    press(bot.handle_dispute, posted_mid(client), B, client)
+    updated = {c.kwargs["channel"] for c in client.chat_update.call_args_list}
+    assert updated == {"C1", A, B}
+
+
+def test_the_sweep_clears_every_copy_too(fake, client):
+    run(f"log <@{B}> 11-7 11-9", client)
+    later = store.now_ist() + timedelta(hours=store.AUTO_CONFIRM_HOURS + 1)
+    standings.sweep_pending(client, now=later)
+    updated = {c.kwargs["channel"] for c in client.chat_update.call_args_list}
+    assert updated == {"C1", A, B}
+
+
+def test_one_unreachable_person_does_not_stop_the_others(fake, client):
+    def selective(**kwargs):
+        if kwargs.get("channel") == A:
+            raise Exception("cannot_dm_bot")
+        return {"channel": kwargs.get("channel"), "ts": "1.1"}
+    client.chat_postMessage.side_effect = selective
+
+    respond = run(f"log <@{B}> 11-7", client)
+    record = store.get_pending(posted_mid(client))
+    assert set(record["dms"]) == {B}          # B still got asked
+    assert respond.call_count == 0            # and it's not reported as a failure
+    press(bot.handle_confirm, posted_mid(client), B, client)
+    assert fake.rating(A) > elo.START_RATING
+
+
+def test_if_nobody_could_be_asked_the_logger_is_told(fake, client):
+    """Silently sitting until the sweep would look like it simply worked."""
+    def channel_only(**kwargs):
+        if not str(kwargs.get("channel", "")).startswith("C"):
+            raise Exception("cannot_dm_bot")
+        return {"channel": kwargs["channel"], "ts": "1.1"}
+    client.chat_postMessage.side_effect = channel_only
+
+    respond = run(f"log <@{B}> 11-7", client)
+    assert "couldn't DM anyone to confirm" in said(respond)
+    assert len(store.list_pending()) == 1     # still valid, still sweepable
+
+
+def test_a_settled_session_can_still_be_settled_from_an_old_message(fake, client):
+    """A session logged before DMs existed has no stored locations; the press
+    still has to land somewhere."""
+    run(f"log <@{B}> 11-7", client)
+    mid = posted_mid(client)
+    record = store.get_pending(mid)
+    record.pop("dms"), record.pop("channel"), record.pop("ts")
+    store.kv.set_(store.pending_key(mid), json.dumps(record))
+
+    press(bot.handle_confirm, mid, B, client)
+    assert fake.rating(A) > elo.START_RATING
+    assert client.chat_update.call_count == 1     # the container fallback

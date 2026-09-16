@@ -94,17 +94,33 @@ way. The word `log` is optional once you know the bot — `/tt @bob 11-7` works.
 
 ### Confirming
 
-A logged match changes nothing until someone **on the other side** confirms it.
-That's the whole integrity model: the only person who can wave a result through
-is the person it costs.
+A logged session changes nothing until someone **on the other side** confirms
+it. That's the whole integrity model: the only person who can wave a result
+through is the person it costs.
 
-- **Confirm** — rates the match and edits the message to show the new ratings.
+**The verdict goes out by DM, not to the channel.** The channel sees the claim
+and who it's waiting on — read-only. The buttons go privately to the people
+whose rating is at stake:
+
+| Who | Gets | Can |
+|---|---|---|
+| each opponent | a DM | **✅ Confirm** · **❌ That's wrong** |
+| whoever logged it | a DM | **🗑 Cancel this** — their mistake to take back, not their result to wave through |
+| everyone else | the channel post | read it |
+
+Buttons sitting in a channel invite everyone who can see them to press, and the
+ones who shouldn't only find out after clicking. Keeping them in DMs means the
+question reaches exactly the people entitled to answer it.
+
+- **Confirm** — rates the session, and rewrites the channel post *and* every DM
+  so no live button is left anywhere for something already decided.
 - **That's wrong** — throws it out. Nothing is rated. Log it again properly.
 - **Neither** — after 24 hours a daily sweep applies it anyway. Silence past the
   window counts as agreement; the losing side had a day and a button.
 
-In doubles, either opponent can confirm. If a bystander logged the match, any of
-the four players can.
+In doubles both opponents are asked and either can settle it. If a bystander
+logged the session, all the players are asked. If nobody could be DM'd — app DMs
+switched off — whoever logged it is told, and the sweep still applies it.
 
 **Admins skip it.** Anyone listed in `TT_ADMINS` has their sessions rated the
 moment they log them, and can confirm or throw out anybody else's pending
