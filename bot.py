@@ -250,12 +250,22 @@ def disputers(record):
 
 
 def may_confirm(record, uid):
-    """Admins can settle anything, which is the only way to clear a session whose
-    players have gone quiet before the sweep gets to it."""
-    return is_admin(uid) or uid in confirmers(record)
+    """Admins can settle anyone else's session — the only way to clear one whose
+    players have gone quiet before the sweep gets to it.
+
+    Not their own, though. "Nobody waves through a result they logged
+    themselves" is the rule the whole thing rests on, and an admin is exactly
+    who it would be least defensible to exempt. (Admin sessions skip the queue
+    entirely anyway, so this only bites if someone was granted admin *after*
+    logging something.)
+    """
+    if uid in confirmers(record):
+        return True
+    return is_admin(uid) and record.get("logged_by") != uid
 
 
 def may_dispute(record, uid):
+    """Throwing a result out costs nobody anything, so an admin may always."""
     return is_admin(uid) or uid in disputers(record)
 
 
@@ -538,6 +548,7 @@ def handle_confirm(body, client, respond, logger=None):
         return
     _settle_everywhere(client, blob, applied_blocks(blob), "Session confirmed.",
                        body=body, respond=respond, logger=logger)
+    _note_if_ephemeral(body, respond, f":white_check_mark: Settled `#{mid}`.")
 
 
 def handle_dispute(body, client, respond, logger=None):
@@ -560,6 +571,18 @@ def handle_dispute(body, client, respond, logger=None):
     ]
     _settle_everywhere(client, record, blocks, "Session discarded.",
                        body=body, respond=respond, logger=logger)
+    _note_if_ephemeral(body, respond, f":wastebasket: Threw out `#{mid}`.")
+
+
+def _note_if_ephemeral(body, respond, text):
+    """Acknowledge a press that came from an ephemeral list.
+
+    Pressing from a DM edits that DM, so the result is obvious. Pressing from
+    `/tt pending` edits messages elsewhere and would otherwise look like nothing
+    happened — the stale list is still sitting there with its buttons.
+    """
+    if (body or {}).get("container", {}).get("is_ephemeral"):
+        _only_you(respond, text)
 
 
 def _action_value(body):
@@ -889,20 +912,64 @@ def handle_history(command, respond, bot_id=None):
     respond("\n".join(lines))
 
 
-def handle_pending(respond):
+ADMIN_PENDING_LIMIT = 12  # 3 blocks each, well inside Slack's 50-block ceiling
+
+
+def _pending_line(record):
+    games_a, games_b, _, _ = elo.tally(record["games"])
+    who = confirmers(record)
+    return (f"`#{record['id']}`  {fmt_side(record['side_a'])} *{games_a}–{games_b}* "
+            f"{fmt_side(record['side_b'])}",
+            f"logged by <@{record['logged_by']}> {fmt_ago(record['logged_at'])}  ·  "
+            f"needs {fmt_side(who) or 'anyone'}")
+
+
+def admin_pending_blocks(records, admin):
+    """The pending queue with buttons on it, for an admin.
+
+    Only ever rendered into an ephemeral reply, so the buttons exist solely for
+    the one person entitled to press them and never sit in a channel for
+    everyone else to try.
+    """
+    blocks = [_section(":hourglass_flowing_sand: *Waiting on confirmation*")]
+    for record in records[:ADMIN_PENDING_LIMIT]:
+        head, tail = _pending_line(record)
+        mid = record["id"]
+        buttons = []
+        if may_confirm(record, admin):
+            buttons.append(_button(CONFIRM_ACTION, "✅  Confirm", mid, style="primary"))
+        buttons.append(_button(DISPUTE_ACTION, "❌  Throw out", mid))
+        blocks += [
+            _section(f"{head}\n{fmt_games(record['games'])}"),
+            _context(tail + ("" if may_confirm(record, admin)
+                             else "  ·  _yours to cancel, not to confirm_")),
+            {"type": "actions", "block_id": f"tt_admin_{mid}", "elements": buttons},
+        ]
+    if len(records) > ADMIN_PENDING_LIMIT:
+        blocks.append(_context(f"_…and {len(records) - ADMIN_PENDING_LIMIT} more._"))
+    return blocks
+
+
+def handle_pending(command, respond):
     records = store.list_pending()
     if not records:
-        respond(":white_check_mark: Nothing waiting — every match is confirmed.")
+        respond(":white_check_mark: Nothing waiting — every session is confirmed.")
         return
+
+    caller = command.get("user_id")
+    if is_admin(caller):
+        # Admins get the buttons here because the verdict DMs go to the players,
+        # not to them — without this they hold the permission and no way to use it.
+        respond(blocks=admin_pending_blocks(records, caller),
+                text="Sessions waiting on confirmation.")
+        return
+
     lines = [":hourglass_flowing_sand: *Waiting on confirmation*"]
     for record in records:
-        games_a, games_b, _, _ = elo.tally(record["games"])
-        who = confirmers(record)
-        lines.append(f"`#{record['id']}`  {fmt_side(record['side_a'])} *{games_a}–{games_b}* "
-                     f"{fmt_side(record['side_b'])}  ·  logged by <@{record['logged_by']}> "
-                     f"{fmt_ago(record['logged_at'])}  ·  needs {fmt_side(who) or 'anyone'}")
-    lines.append("\n_Scroll back to the match message to confirm, or leave it — "
-                 f"unconfirmed matches apply themselves after {store.AUTO_CONFIRM_HOURS}h._")
+        head, tail = _pending_line(record)
+        lines.append(f"{head}  ·  {tail}")
+    lines.append("\n_Check your DMs to settle one, or leave it — unconfirmed "
+                 f"sessions apply themselves after {store.AUTO_CONFIRM_HOURS}h._")
     respond("\n".join(lines))
 
 
@@ -1001,7 +1068,7 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
         elif sub == "history":
             handle_history(command, respond, bot_id)
         elif sub == "pending":
-            handle_pending(respond)
+            handle_pending(command, respond)
         elif sub == "undo":
             handle_undo(command, respond)
         elif sub == "odds":

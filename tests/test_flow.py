@@ -46,11 +46,14 @@ def run(text, client, user=A, respond=None):
     return respond
 
 
-def press(action, mid, user, client, respond=None, channel="C1", ts="1700000000.1"):
+def press(action, mid, user, client, respond=None, channel="C1", ts="1700000000.1",
+          ephemeral=False):
     respond = respond or MagicMock()
-    body = {"user": {"id": user}, "actions": [{"value": mid}],
-            "container": {"channel_id": channel, "message_ts": ts}}
-    action(body, client, respond)
+    container = {"channel_id": channel, "message_ts": ts}
+    if ephemeral:
+        container["is_ephemeral"] = True   # as a press from /tt pending arrives
+    action({"user": {"id": user}, "actions": [{"value": mid}],
+            "container": container}, client, respond)
     return respond
 
 
@@ -951,3 +954,104 @@ def test_a_settled_session_can_still_be_settled_from_an_old_message(fake, client
     press(bot.handle_confirm, mid, B, client)
     assert fake.rating(A) > elo.START_RATING
     assert client.chat_update.call_count == 1     # the container fallback
+
+
+# --- an admin settling someone else's session -----------------------------
+
+def admin_pending(client, caller=ADMIN):
+    respond = MagicMock()
+    bot.handle_pending({"user_id": caller}, respond)
+    return respond
+
+
+def blocks_of(respond):
+    for c in respond.call_args_list:
+        if c.kwargs.get("blocks"):
+            return c.kwargs["blocks"]
+    return []
+
+
+def action_ids_for(respond, mid):
+    for b in blocks_of(respond):
+        if b.get("block_id") == f"tt_admin_{mid}":
+            return [e["action_id"] for e in b["elements"]]
+    return []
+
+
+def test_pending_gives_an_admin_buttons(fake, client, admin):
+    """The verdict DMs go to the players, so without this an admin holds the
+    permission and has nowhere to use it."""
+    run(f"log <@{B}> 11-7 11-9", client, user=A)
+    mid = posted_mid(client)
+    assert action_ids_for(admin_pending(client), mid) == \
+        [bot.CONFIRM_ACTION, bot.DISPUTE_ACTION]
+
+
+def test_pending_stays_plain_text_for_everyone_else(fake, client, admin):
+    run(f"log <@{B}> 11-7", client, user=A)
+    assert blocks_of(admin_pending(client, caller=C)) == []
+    assert "Waiting on confirmation" in said(admin_pending(client, caller=C))
+
+
+def test_an_admin_confirms_another_persons_session_from_the_list(fake, client, admin):
+    run(f"log <@{B}> 11-7 11-9", client, user=A)
+    mid = posted_mid(client)
+    respond = MagicMock()
+    press(bot.handle_confirm, mid, ADMIN, client, respond=respond, ephemeral=True)
+
+    assert store.get_pending(mid) is None
+    assert fake.rating(A) > elo.START_RATING > fake.rating(B)
+    assert f"Settled `#{mid}`" in said(respond)       # the list looks unchanged otherwise
+
+
+def test_an_admin_throws_out_another_persons_session_from_the_list(fake, client, admin):
+    run(f"log <@{B}> 11-7", client, user=A)
+    mid = posted_mid(client)
+    respond = MagicMock()
+    press(bot.handle_dispute, mid, ADMIN, client, respond=respond, ephemeral=True)
+    assert store.list_pending() == []
+    assert f"Threw out `#{mid}`" in said(respond)
+
+
+def test_settling_from_the_list_still_updates_the_players_copies(fake, client, admin):
+    run(f"log <@{B}> 11-7", client, user=A)
+    press(bot.handle_confirm, posted_mid(client), ADMIN, client, ephemeral=True)
+    updated = {c.kwargs["channel"] for c in client.chat_update.call_args_list}
+    assert updated == {"C1", A, B}          # channel + both players' DMs
+
+
+def test_an_admin_cannot_confirm_a_session_they_logged_themselves(fake, client, monkeypatch):
+    """Nobody waves through their own result — an admin least defensibly of all.
+    (Reachable only if admin was granted after the session was logged.)"""
+    run(f"log <@{B}> 11-7 11-9", client, user=A)      # A logs it as a normal player
+    mid = posted_mid(client)
+    monkeypatch.setenv("TT_ADMINS", A)                # A is promoted afterwards
+
+    respond = press(bot.handle_confirm, mid, A, client)
+    assert "Only" in said(respond)
+    assert store.get_pending(mid) is not None
+    assert action_ids_for(admin_pending(client, caller=A), mid) == [bot.DISPUTE_ACTION]
+
+
+def test_an_admin_can_still_cancel_their_own(fake, client, monkeypatch):
+    run(f"log <@{B}> 11-7", client, user=A)
+    mid = posted_mid(client)
+    monkeypatch.setenv("TT_ADMINS", A)
+    press(bot.handle_dispute, mid, A, client)
+    assert store.list_pending() == []
+
+
+def test_a_normal_dm_press_gets_no_extra_note(fake, client):
+    """Pressing from a DM edits that DM, so an extra 'settled' note is noise."""
+    run(f"log <@{B}> 11-7", client, user=A)
+    respond = press(bot.handle_confirm, posted_mid(client), B, client)
+    assert "Settled" not in said(respond)
+
+
+def test_the_admin_list_is_capped(fake, client, admin, monkeypatch):
+    monkeypatch.setattr(bot, "ADMIN_PENDING_LIMIT", 2)
+    for opponent in (B, C, D):
+        run(f"log <@{opponent}> 11-7", client, user=A)
+    respond = admin_pending(client)
+    assert len([b for b in blocks_of(respond) if b["type"] == "actions"]) == 2
+    assert "1 more" in said(respond)
