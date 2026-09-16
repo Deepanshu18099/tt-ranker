@@ -45,7 +45,11 @@ HOME_CHANNEL = os.environ.get("TT_CHANNEL", "")
 # Below this many *games* a rating says more about luck than about the player,
 # so they sit in a "still placing" line instead of the ladder proper. Counted in
 # games rather than sessions, because one session can be 2 games or 20.
-PLACEMENT_GAMES = 15
+#
+# Set low on purpose. A 6-game rating is noisy, but an empty leaderboard in the
+# first week is worse than a rough one — nobody keeps playing for a board that
+# never shows them. Raise it once there is volume.
+PLACEMENT_GAMES = 6
 BOARD_LIMIT = 20
 # Guard on /tt sync: a ladder is a room of people who play each other, and
 # anything past this is someone running it in the wrong channel.

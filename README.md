@@ -373,7 +373,7 @@ that point, just play a correcting session.
 It floors at 100.
 
 **Why don't I appear on the board?**
-Fifteen games to qualify. Before that you're in the *Still placing* line — your
+Six games to qualify. Before that you're in the *Still placing* line — your
 rating exists and moves, it just isn't ranked yet.
 
 ### Changing the numbers
