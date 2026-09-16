@@ -38,6 +38,16 @@ def test_debug_works_whichever_path_vercel_hands_us(app, path):
     assert payload["env"]["SLACK_BOT_TOKEN"] is True
 
 
+def test_debug_identifies_which_deployment_answered(app, monkeypatch):
+    """Without this, "I set the variable and it's still false" can't be told
+    apart from an older deployment still serving traffic."""
+    monkeypatch.setenv("VERCEL_DEPLOYMENT_ID", "dpl_abc123")
+    monkeypatch.setenv("VERCEL_ENV", "production")
+    payload = app.get("/debug").get_json()
+    assert payload["deployment"] == "dpl_abc123"
+    assert payload["vercel_env"] == "production"
+
+
 def test_debug_reports_the_ladder_on_request(app, fake):
     payload = app.get("/debug?ladder=1").get_json()
     assert payload["ladder"]["players"] == 0

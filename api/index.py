@@ -48,6 +48,12 @@ def _debug_payload(observed_path):
                 "KV_REST_API_TOKEN", "CRON_SECRET", "TT_CHANNEL")
     payload = {
         "commit": os.environ.get("VERCEL_GIT_COMMIT_SHA", "unknown")[:7],
+        # Which deployment answered, and which env's variables it was built with.
+        # An env var only reaches a *new* deployment, so "I set it and it's still
+        # false" is nearly always an old deployment still serving — without these
+        # two fields that is indistinguishable from the variable being wrong.
+        "deployment": os.environ.get("VERCEL_DEPLOYMENT_ID", "local"),
+        "vercel_env": os.environ.get("VERCEL_ENV", "local"),
         "python": sys.version.split()[0],
         "observed_path": observed_path,  # what Vercel actually handed Flask
         "env": {name: bool(os.environ.get(name)) for name in required},
