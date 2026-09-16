@@ -574,3 +574,82 @@ def test_a_long_session_is_still_one_undoable_entry(fake, client):
     assert "Undid" in said(run("undo", client))
     assert fake.rating(A) == fake.rating(B) == elo.START_RATING
     assert fake.player(A)["games_won"] == 0
+
+
+# --- the shortcuts-menu entry ----------------------------------------------
+
+def shortcut(client, user=A):
+    ack = MagicMock()
+    bot.handle_log_shortcut(ack, {"user": {"id": user}, "trigger_id": "tid.9"},
+                            client=client)
+    return ack
+
+
+def test_the_shortcut_opens_the_same_form(fake, client):
+    ack = shortcut(client)
+    ack.assert_called_once_with()
+    view = client.views_open.call_args.kwargs["view"]
+    assert view["callback_id"] == bot.LOG_MODAL
+    assert view["blocks"][0]["element"]["initial_users"] == [A]
+
+
+def test_the_shortcut_form_asks_which_channel(fake, client):
+    """A global shortcut carries no channel context, so it has to ask."""
+    shortcut(client)
+    blocks = client.views_open.call_args.kwargs["view"]["blocks"]
+    assert [b["block_id"] for b in blocks] == ["side_a", "side_b", "games", "channel"]
+    assert blocks[-1]["element"]["type"] == "conversations_select"
+
+
+def test_the_channel_picker_starts_on_the_home_channel(fake, client, monkeypatch):
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "C_TT")
+    shortcut(client)
+    picker = client.views_open.call_args.kwargs["view"]["blocks"][-1]["element"]
+    assert picker["initial_conversation"] == "C_TT"
+
+
+def test_the_picker_has_no_preset_without_a_home_channel(fake, client, monkeypatch):
+    """initial_conversation pointing at nothing would stop the view opening."""
+    monkeypatch.setattr(bot, "HOME_CHANNEL", "")
+    shortcut(client)
+    picker = client.views_open.call_args.kwargs["view"]["blocks"][-1]["element"]
+    assert "initial_conversation" not in picker
+
+
+def test_the_slash_command_form_has_no_channel_picker(fake, client):
+    """It already knows where it was run."""
+    run("log", client)
+    blocks = client.views_open.call_args.kwargs["view"]["blocks"]
+    assert "channel" not in [b["block_id"] for b in blocks]
+
+
+def test_a_session_logged_from_the_shortcut_posts_to_the_chosen_channel(fake, client):
+    state = form_state([A], [B], "11-7 9-11 11-5")
+    state["channel"] = {"v": {"selected_conversation": "C_PICKED"}}
+    submit(state, client, channel="")           # no private_metadata, as a shortcut
+    assert client.chat_postMessage.call_args.kwargs["channel"] == "C_PICKED"
+    assert store.get_pending(posted_mid(client))["side_b"] == [B]
+
+
+def test_a_shortcut_session_confirms_like_any_other(fake, client):
+    state = form_state([A], [B], "11-7 11-9")
+    state["channel"] = {"v": {"selected_conversation": "C_PICKED"}}
+    submit(state, client, channel="")
+    press(bot.handle_confirm, posted_mid(client), B, client)
+    assert fake.rating(A) > elo.START_RATING > fake.rating(B)
+
+
+def test_the_shortcut_form_rejects_an_empty_channel(fake, client):
+    state = form_state([A], [B], "11-7")
+    state["channel"] = {"v": {"selected_conversation": None}}
+    ack = submit(state, client, channel="")
+    assert ack.call_args.kwargs["response_action"] == "errors"
+    assert "channel" in ack.call_args.kwargs["errors"]
+    assert store.list_pending() == []
+
+
+def test_a_shortcut_that_cannot_open_is_explained_by_dm(fake, client):
+    client.views_open.side_effect = Exception("expired_trigger_id")
+    shortcut(client)
+    assert client.chat_postMessage.call_args.kwargs["channel"] == A
+    assert "/tt log @opponent" in said(client.chat_postMessage)

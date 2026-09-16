@@ -237,6 +237,7 @@ def handle_log(command, respond, client, bot_id, logger=None):
 # --- the guided form -------------------------------------------------------
 
 LOG_MODAL = "tt_log_modal"
+LOG_SHORTCUT = "tt_log_shortcut"
 
 
 def _users_block(block_id, label, hint=None, initial=None):
@@ -251,32 +252,74 @@ def _users_block(block_id, label, hint=None, initial=None):
     return block
 
 
-def build_log_modal(caller="", channel_id=""):
-    """The form behind a bare `/tt log`.
+def _channel_block():
+    """Where the confirmation prompt should be posted.
+
+    Only shown when the form was opened from the shortcuts menu, which carries
+    no channel context at all — a slash command already knows where it was run.
+    """
+    element = {"type": "conversations_select", "action_id": "v",
+               "default_to_current_conversation": True,
+               "filter": {"include": ["public", "private"],
+                          "exclude_bot_users": True},
+               "placeholder": {"type": "plain_text", "text": "Pick a channel"}}
+    if HOME_CHANNEL:
+        element["initial_conversation"] = HOME_CHANNEL
+    return {"type": "input", "block_id": "channel", "element": element,
+            "label": {"type": "plain_text", "text": "Post the result in"},
+            "hint": {"type": "plain_text",
+                     "text": "Your opponent confirms it there."}}
+
+
+def build_log_modal(caller="", channel_id="", pick_channel=False):
+    """The form behind a bare `/tt log` and the shortcuts-menu entry.
 
     No singles/doubles switch: one name a side is singles, two is doubles, and
     the pickers already say which. channel_id rides in private_metadata so the
-    submission knows where the match message belongs.
+    submission knows where the result belongs; pick_channel asks instead, for
+    the shortcut path where there is nothing to inherit.
     """
+    blocks = [
+        _users_block("side_a", "Your side", initial=[caller] if caller else None,
+                     hint="Add a partner for doubles."),
+        _users_block("side_b", "Opponents"),
+        {"type": "input", "block_id": "games",
+         "label": {"type": "plain_text", "text": "Game scores"},
+         "hint": {"type": "plain_text",
+                  "text": "The points in each game, your side first. "
+                          "Log as many as you played."},
+         "element": {"type": "plain_text_input", "action_id": "v",
+                     "placeholder": {"type": "plain_text",
+                                     "text": "11-7  9-11  11-5"}}},
+    ]
+    if pick_channel:
+        blocks.append(_channel_block())
     return {
         "type": "modal",
         "callback_id": LOG_MODAL,
         "private_metadata": channel_id or "",
-        "title": {"type": "plain_text", "text": "Log a match"},
+        "title": {"type": "plain_text", "text": "Log a session"},
         "submit": {"type": "plain_text", "text": "Log it"},
         "close": {"type": "plain_text", "text": "Cancel"},
-        "blocks": [
-            _users_block("side_a", "Your side", initial=[caller] if caller else None,
-                         hint="Add a partner for doubles."),
-            _users_block("side_b", "Opponents"),
-            {"type": "input", "block_id": "games",
-             "label": {"type": "plain_text", "text": "Game scores"},
-             "hint": {"type": "plain_text",
-                      "text": "The points in each game, your side first."},
-             "element": {"type": "plain_text_input", "action_id": "v",
-                         "placeholder": {"type": "plain_text", "text": "11-7  9-11  11-5"}}},
-        ],
+        "blocks": blocks,
     }
+
+
+def handle_log_shortcut(ack, shortcut, client=None, logger=None):
+    """The shortcuts-menu (⚡ / +) entry — the same form, opened from anywhere.
+
+    A global shortcut has no channel, so the form carries a channel picker.
+    There's no response_url either, so a failure has to be delivered by DM.
+    """
+    ack()
+    user = shortcut["user"]["id"]
+    try:
+        client.views_open(trigger_id=shortcut["trigger_id"],
+                          view=build_log_modal(user, pick_channel=True))
+    except Exception as e:
+        (logger or log).warning("shortcut views_open failed: %s", e)
+        _dm(client, user, ":warning: Couldn't open the form. Log it with "
+                          "`/tt log @opponent 11-7 9-11 11-5` instead.", logger=logger)
 
 
 def _modal_value(state, block, key="value"):
@@ -294,6 +337,11 @@ def handle_log_modal(ack, body, view, client=None, logger=None):
     side_b = _modal_value(state, "side_b", "selected_users") or []
     caller = body["user"]["id"]
 
+    # The picker is only present on the shortcut path; a slash command inherits
+    # the channel it was run in via private_metadata.
+    channel = (_modal_value(state, "channel", "selected_conversation")
+               or view.get("private_metadata") or "")
+
     errors = {}
     try:
         games = parsing.parse_games(_modal_value(state, "games") or "")
@@ -306,12 +354,14 @@ def handle_log_modal(ack, body, view, client=None, logger=None):
         # Side errors are about the pair of pickers; pin them to the second one,
         # which is the one being filled in when the mistake is usually made.
         errors["side_b"] = str(e)
+    if not channel and "channel" in state:
+        errors["channel"] = "Pick where the result should be posted."
     if errors:
         ack(response_action="errors", errors=errors)
         return
 
     ack()  # close the form
-    error = submit_match(side_a, side_b, games, caller, view.get("private_metadata") or caller,
+    error = submit_match(side_a, side_b, games, caller, channel or caller,
                          client, logger=logger)
     if error:
         # The modal is gone by now, so there is nothing to attach this to.
@@ -425,10 +475,14 @@ No fixed match length. Two games at lunch, fifteen on a Friday — both count, \
 and the longer one counts for more.
 
 *2 · Log it*
+Easiest way: click the :heavy_plus_sign: next to the message box and pick \
+*Log a table tennis session*. Fill in the form, done — nothing to memorise.
+
+Or type it:
 ```
 /tt log @opponent 11-7 9-11 11-5
 ```
-That's the points in each game. Or just type `/tt log` and fill in a form.
+That's the points in each game, one per game. \
 Doubles: `/tt log @partner vs @dan @eve 11-7 11-9`
 
 *3 · The other side confirms*
@@ -720,8 +774,9 @@ def handle_odds(command, respond, bot_id=None):
 
 HELP = f""":table_tennis_paddle_and_ball: *TT Ranker* — the office table tennis ladder.
 
-*Log a match*
+*Log a session*
 • `/tt log` — opens a form: pick the players, type the scores
+   (also in the :heavy_plus_sign: shortcuts menu next to the message box)
 • `/tt log @bob 11-7 9-11 11-5` — singles, you vs Bob
 • `/tt log @partner vs @dan @eve 11-7 11-9` — doubles
 • `/tt log @ann @bob vs @cal @dee 11-7 11-9` — record someone else's match
@@ -814,6 +869,7 @@ def build_app(process_before_response=False, token_verification=True):
     app.action(CONFIRM_ACTION)(_wrap_action(handle_confirm))
     app.action(DISPUTE_ACTION)(_wrap_action(handle_dispute))
     app.view(LOG_MODAL)(handle_log_modal)
+    app.shortcut(LOG_SHORTCUT)(handle_log_shortcut)
     app.event("member_joined_channel")(handle_member_joined)
     return app
 

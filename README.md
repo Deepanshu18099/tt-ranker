@@ -35,7 +35,7 @@ Everything is one slash command, `/tt`.
 
 | Command | What it does |
 |---|---|
-| **`/tt log`** | **Opens a form — pick the players, type the scores** |
+| **`/tt log`** · **`+` menu → Log a table tennis session** | **Opens a form — pick the players, type the scores** |
 | `/tt log @bob 11-7 9-11 11-5` | Log singles — you against Bob, any number of games |
 | `/tt log @partner vs @dan @eve 11-7 11-9` | Doubles. `vs` splits the sides |
 | `/tt log @ann @bob vs @cal @dee 11-7 11-9` | Record a session you weren't in |
@@ -52,11 +52,19 @@ Everything is one slash command, `/tt`.
 
 ### The form
 
-`/tt log` on its own opens a modal: a people picker for your side (you're
-pre-selected), one for your opponents, and a box for the scores.
+Two ways in, same form:
+
+- **`/tt log`** on its own
+- the **`+` / shortcuts menu** in the message composer → *Log a table tennis
+  session* — no syntax to remember at all
+
+A people picker for your side (you're pre-selected), one for your opponents, and
+a box for the scores. Opened from the shortcuts menu it also asks which channel
+to post the result in, since a global shortcut carries no channel context;
+started from `/tt log` it already knows.
 
 ```
-┌─ Log a match ─────────────────────────────┐
+┌─ Log a session ───────────────────────────┐
 │  Your side        [ @you            ▾ ]   │
 │  Add a partner for doubles.               │
 │                                           │
@@ -64,7 +72,10 @@ pre-selected), one for your opponents, and a box for the scores.
 │                                           │
 │  Game scores                              │
 │  [ 11-7  9-11  11-5                   ]   │
-│  The points in each game, your side first.│
+│  The points in each game, your side       │
+│  first. Log as many as you played.        │
+│                                           │
+│  Post the result in   [ #table-tennis ▾ ] │  ← shortcuts menu only
 │                                           │
 │                    [ Cancel ]  [ Log it ] │
 └───────────────────────────────────────────┘
