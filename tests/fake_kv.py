@@ -9,6 +9,7 @@ untested.
 Values are stored as strings the way Redis does, so a test fails here for the
 same reason production would if a caller forgot to coerce an int back.
 """
+import re
 from unittest.mock import patch
 
 import kv
@@ -59,6 +60,18 @@ class FakeRedis:
 
     def do_del(self, *keys):
         return sum(1 for k in keys if self.data.pop(k, None) is not None)
+
+    def do_scan(self, cursor, *opts):
+        """Cursor-paged like the real thing, so kv.scan's loop is under test."""
+        opts = list(opts)
+        pattern = opts[opts.index("MATCH") + 1] if "MATCH" in opts else "*"
+        count = int(opts[opts.index("COUNT") + 1]) if "COUNT" in opts else 10
+        rx = re.compile("^" + re.escape(pattern).replace(r"\*", ".*") + "$")
+        keys = sorted(k for k in self.data if rx.match(k))
+        start = int(cursor)
+        page = keys[start:start + count]
+        nxt = start + count
+        return [str(nxt) if nxt < len(keys) else "0", page]
 
     def do_expire(self, key, seconds):
         self.ttl[key] = int(seconds)

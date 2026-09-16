@@ -206,3 +206,26 @@ def test_you_can_only_undo_a_match_you_logged(fake):
     confirm(log([C], [D], by=C), by=D)
     assert store.last_match_by(A)["id"] == mine["id"]
     assert store.last_match_by(B) is None
+
+
+# --- the admin reset -------------------------------------------------------
+
+def test_scan_finds_only_the_matching_prefix(fake):
+    """The ladder shares a database with another bot, so a prefix scan is the
+    difference between a reset and an outage."""
+    import kv
+    confirm(log([A], [B]), by=B)
+    fake.data["prlb:total"] = {"U1": "31"}          # pr-raiser's, must survive
+    fake.data["prwatch:acme/web#12"] = {"U1": ""}
+
+    ladder = kv.scan("tt:*")
+    assert ladder and all(k.startswith("tt:") for k in ladder)
+    assert "prlb:total" not in ladder
+    assert set(kv.scan("*")) - set(ladder) == {"prlb:total", "prwatch:acme/web#12"}
+
+
+def test_scan_follows_the_cursor_to_the_end(fake):
+    import kv
+    for i in range(250):
+        fake.data[f"tt:player:U{i}"] = {"rating": "1000"}
+    assert len(kv.scan("tt:*")) == 250

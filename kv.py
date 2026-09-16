@@ -181,3 +181,18 @@ def lrem(key, value, count=0):
 def expire(key, seconds):
     """Give a key a TTL so it cleans itself up instead of living forever."""
     return _command(["EXPIRE", key, int(seconds)])
+
+
+def scan(match="*", count=200):
+    """Every key matching a pattern, following the cursor to the end.
+
+    Only used by the admin reset script. Note this database may be shared with
+    another bot, which is exactly why that script matches a prefix instead of
+    reaching for FLUSHDB.
+    """
+    keys, cursor = [], "0"
+    while True:
+        cursor, batch = _command(["SCAN", cursor, "MATCH", match, "COUNT", count])
+        keys += batch or []
+        if str(cursor) == "0":
+            return sorted(set(keys))
