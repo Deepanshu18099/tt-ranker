@@ -653,3 +653,55 @@ def test_a_shortcut_that_cannot_open_is_explained_by_dm(fake, client):
     shortcut(client)
     assert client.chat_postMessage.call_args.kwargs["channel"] == A
     assert "/tt log @opponent" in said(client.chat_postMessage)
+
+
+# --- a bystander's click must not touch the channel's view -----------------
+
+def ephemeral_calls(respond):
+    return [c.kwargs for c in respond.call_args_list
+            if c.kwargs.get("response_type") == "ephemeral"]
+
+
+def test_a_bystander_pressing_confirm_leaves_the_prompt_alone(fake, client):
+    """A reply to an interactive component replaces the message it came from
+    unless told otherwise — so without replace_original=False a passer-by's
+    click would wipe the buttons for the people who can actually press them."""
+    run(f"log <@{B}> 11-7 11-9", client)
+    mid = posted_mid(client)
+    respond = press(bot.handle_confirm, mid, C, client)
+
+    assert all(c["replace_original"] is False for c in ephemeral_calls(respond))
+    assert client.chat_update.call_count == 0      # channel message untouched
+    assert store.get_pending(mid) is not None      # still confirmable
+    press(bot.handle_confirm, mid, B, client)      # and B can still settle it
+    assert fake.rating(A) > elo.START_RATING
+
+
+def test_a_bystander_pressing_dispute_leaves_the_prompt_alone(fake, client):
+    run(f"log <@{B}> 11-7", client)
+    mid = posted_mid(client)
+    respond = press(bot.handle_dispute, mid, C, client)
+    assert all(c["replace_original"] is False for c in ephemeral_calls(respond))
+    assert client.chat_update.call_count == 0
+    assert store.get_pending(mid) is not None
+
+
+@pytest.mark.parametrize("user,action", [
+    (A, bot.handle_confirm),      # the reporter confirming their own
+    (C, bot.handle_confirm),      # a bystander
+    (C, bot.handle_dispute),      # a bystander
+])
+def test_every_refusal_is_private_and_non_destructive(fake, client, user, action):
+    run(f"log <@{B}> 11-7 11-9", client)
+    respond = press(action, posted_mid(client), user, client)
+    calls = ephemeral_calls(respond)
+    assert calls, "a refusal must say something"
+    assert all(c["replace_original"] is False for c in calls)
+    assert store.get_pending(posted_mid(client)) is not None
+
+
+def test_settling_the_match_still_replaces_the_prompt(fake, client):
+    """The guard must not have broken the case that *should* edit the message."""
+    run(f"log <@{B}> 11-7", client)
+    press(bot.handle_confirm, posted_mid(client), B, client)
+    assert client.chat_update.call_count == 1

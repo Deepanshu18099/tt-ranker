@@ -368,30 +368,38 @@ def handle_log_modal(ack, body, view, client=None, logger=None):
         _dm(client, caller, error, logger=logger)
 
 
+def _only_you(respond, text):
+    """Reply to a button press with a note only the presser sees.
+
+    replace_original=False is not optional: a reply to an interactive
+    component's response_url *replaces the message it came from* by default. Left
+    off, a bystander pressing Confirm would swap the whole channel's view of the
+    match for their own "you can't do that" notice — wiping the buttons for the
+    people who actually can, and stranding the session in pending forever.
+    """
+    respond(response_type="ephemeral", replace_original=False, text=text)
+
+
 def handle_confirm(body, client, respond, logger=None):
     mid = _action_value(body)
     user = body["user"]["id"]
     record = store.get_pending(mid)
     if not record:
-        respond(response_type="ephemeral",
-                text=":information_source: That match has already been settled.")
+        _only_you(respond, ":information_source: That match has already been settled.")
         return
     allowed = confirmers(record)
     if allowed and user not in allowed:
-        respond(response_type="ephemeral",
-                text=f":lock: Only {fmt_side(allowed)} can confirm this one.")
+        _only_you(respond, f":lock: Only {fmt_side(allowed)} can confirm this one.")
         return
     if not store.claim_pending(mid):
-        respond(response_type="ephemeral",
-                text=":information_source: Someone just confirmed that one.")
+        _only_you(respond, ":information_source: Someone just confirmed that one.")
         return
     try:
         blob = store.apply_match(record, confirmed_by=user)
     except Exception:
         store.release_pending(mid)  # leave it confirmable rather than stuck
         (logger or log).exception("applying match %s failed", mid)
-        respond(response_type="ephemeral",
-                text=":x: Something went wrong rating that match — try again in a moment.")
+        _only_you(respond, ":x: Something went wrong rating that match — try again in a moment.")
         return
     _replace(body, client, respond, applied_blocks(blob),
              fallback="Match confirmed.", logger=logger)
@@ -402,12 +410,10 @@ def handle_dispute(body, client, respond, logger=None):
     user = body["user"]["id"]
     record = store.get_pending(mid)
     if not record:
-        respond(response_type="ephemeral",
-                text=":information_source: That match has already been settled.")
+        _only_you(respond, ":information_source: That match has already been settled.")
         return
     if user not in disputers(record):
-        respond(response_type="ephemeral",
-                text=":lock: Only the players in this match can dispute it.")
+        _only_you(respond, ":lock: Only the players in this match can dispute it.")
         return
     store.drop_pending(mid)
     games_a, games_b, _, _ = elo.tally(record["games"])
@@ -881,12 +887,11 @@ def _wrap_action(fn):
     def listener(ack, body, respond, client=None, logger=None):
         ack()
         if not kv.kv_available():
-            respond(response_type="ephemeral", text=NO_KV)
+            _only_you(respond, NO_KV)
             return
         try:
             fn(body, client, respond, logger=logger)
         except Exception:
             (logger or log).exception("action %s failed", fn.__name__)
-            respond(response_type="ephemeral",
-                    text=":x: Something went wrong — try again in a moment.")
+            _only_you(respond, ":x: Something went wrong — try again in a moment.")
     return listener
