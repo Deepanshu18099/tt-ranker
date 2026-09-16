@@ -1,7 +1,8 @@
 # TT Ranker
 
-A Slack bot that keeps an Elo ladder for office table tennis. Play a match, type
-the scores, the other side presses **Confirm**, and everyone's rating moves.
+A Slack bot that keeps an Elo ladder for office table tennis. Play as many games
+as you have time for, type the scores, the other side presses **Confirm**, and
+everyone's rating moves.
 
 Singles and doubles, one ladder, no spreadsheet.
 
@@ -18,10 +19,13 @@ tt-ranker: 🏓 @you  2–1  @bob
 tt-ranker: 🏓 @you beat @bob — 2–1
            11-7   9-11   11-5
 
-           @you  1000 → 1004  +4
-           @bob  1000 →  996  -4
+           @you  1000 → 1010  +10
+           @bob  1000 →  990  -10
            Match #17 · confirmed by @bob
 ```
+
+Every game is rated on its own, so a ten-game session counts for more than a
+three-game one — [how the rating works](#how-your-rating-is-calculated).
 
 ---
 
@@ -32,17 +36,18 @@ Everything is one slash command, `/tt`.
 | Command | What it does |
 |---|---|
 | **`/tt log`** | **Opens a form — pick the players, type the scores** |
-| `/tt log @bob 11-7 9-11 11-5` | Log a singles match — you against Bob |
+| `/tt log @bob 11-7 9-11 11-5` | Log singles — you against Bob, any number of games |
 | `/tt log @partner vs @dan @eve 11-7 11-9` | Doubles. `vs` splits the sides |
-| `/tt log @ann @bob vs @cal @dee 11-7 11-9` | Record a match you weren't in |
+| `/tt log @ann @bob vs @cal @dee 11-7 11-9` | Record a session you weren't in |
 | `/tt board` | The ladder |
 | `/tt me` · `/tt me @bob` | One player's card — rating, record, streak, peak |
 | `/tt history` · `/tt history @bob` | Recent results |
-| `/tt pending` | Matches still waiting on confirmation |
+| `/tt pending` | Sessions still waiting on confirmation |
 | `/tt odds @bob` | Who's favoured, before you play |
-| `/tt undo` | Roll back the last match *you* logged |
-| `/tt register` | Join early (playing a match registers you anyway) |
+| `/tt undo` | Roll back the last session *you* logged |
+| `/tt register` | Join early (playing registers you anyway) |
 | `/tt sync` | Put everyone already in this channel on the ladder |
+| `/tt intro` | Post the how-it-works message, for pinning |
 | `/tt help` | All of the above, in Slack |
 
 ### The form
@@ -70,10 +75,10 @@ Mistakes come back attached to the field that's wrong, so a typo is one
 correction rather than retyping the whole thing. Both routes run the same
 validation and end at the same confirmation prompt.
 
-Scores are **the points in each game**, one per game: `11-7 9-11 11-5` is a
-best-of-five won 2–1. Games to 21 work fine. `11 - 7`, `11:7` and `11–7` are all
-read the same way. The word `log` is optional once you know the bot — `/tt @bob
-11-7` works.
+Scores are **the points in each game**, one per game: `11-7 9-11 11-5` is three
+games won 2–1. There's no fixed session length — log two games or twenty, up to
+25. Games to 21 work fine. `11 - 7`, `11:7` and `11–7` are all read the same
+way. The word `log` is optional once you know the bot — `/tt @bob 11-7` works.
 
 ### Confirming
 
@@ -115,19 +120,26 @@ everyone in it.
 
 ## How your rating is calculated
 
-Everyone starts at **1000**. After every match, each player's rating moves by:
+Everyone starts at **1000**.
+
+**Every game is rated on its own, and they add up.** A session runs as long as
+you have time for — two games at lunch, fifteen on a Friday. That length is
+information, not noise: winning 8 of 10 is a far stronger claim than winning 2
+of 3, so the longer session moves ratings further.
+
+Each game contributes:
 
 ```
-change  =  K  ×  margin  ×  ( what you scored  −  what you were expected to score )
+K  ×  margin  ×  upset  ×  ( did you win it?  −  what you were expected to score )
 ```
 
-Four things go into that. Each one is boring on its own.
+Four inputs. Each one is boring on its own.
 
-### 1. What you were expected to score
+### 1 · What you were expected to score
 
 Standard Elo. The gap between the two ratings is the whole input:
 
-| You're rated… | …your expected score |
+| You're rated… | …your expected score per game |
 |---|---|
 | level | 50% |
 | 50 above | 57% |
@@ -135,108 +147,124 @@ Standard Elo. The gap between the two ratings is the whole input:
 | 200 above | 76% |
 | 300 above | 85% |
 | 400 above | 91% |
+| 600 above | 97% |
 
 400 points is the classic 10-to-1 favourite. In doubles the pair's rating is the
-**average** of the two partners, and that average is what goes into the table.
+**average** of the two partners, and that average goes into the table.
 
-### 2. What you actually scored
+This expectation is worked out once from the ratings you both walked in with,
+and held for the whole session — so the result can't depend on the order the
+games happened to be typed in.
 
-The share of **games** you won.
+### 2 · Did you win the game
 
-| Result | Your score |
+1 or 0. That's it. No fractions, because each game is rated separately rather
+than the session being averaged into a single result.
+
+Losses inside a session cancel wins, so the whole thing collapses to *how much
+better did you do than expected*.
+
+### 3 · How decisively you won it — the margin
+
+This is where the point scores earn their keep. Per game:
+
+| You won by | Multiplier |
 |---|---|
-| 3–0 | 1.00 |
-| 3–1 | 0.75 |
-| 2–1 | 0.67 |
-| 2–2 | 0.50 |
-| 1–2 | 0.33 |
-| 0–3 | 0.00 |
+| 1 point | ×0.45 (floor) |
+| 2 points | ×0.56 |
+| 3 points | ×0.80 |
+| **4 points** | **×1.00** |
+| 5 points | ×1.17 |
+| 6 points | ×1.33 |
+| 8 points | ×1.60 |
+| 9 points | ×1.71 |
+| 11 points | ×1.75 (cap) |
 
-A 2–1 win is 0.67, not 1.00 — because winning two games out of three is genuinely
-weak evidence that you're the better player. A coin does it 37% of the time.
+An 11-2 is worth roughly **three times** an 11-9. The curve is log-damped and
+clamped at both ends, because point margins are noisy — one 11-0 shouldn't
+rewrite the ladder, and a single deuce shouldn't erase a win.
 
-### 3. How decisive it was — the margin multiplier
-
-This is where the point scores earn their keep. Take the **whole match's** point
-difference and divide by the number of games:
-
-| Average margin | Multiplier |
-|---|---|
-| 1 point/game | ×0.60 |
-| 2 points/game | ×0.68 |
-| 3 points/game | ×0.86 |
-| **4 points/game** | **×1.00** |
-| 5 points/game | ×1.11 |
-| 6 points/game | ×1.21 |
-| 8 points/game | ×1.37 |
-| 9+ points/game | ×1.40 (capped) |
-
-So a 3–0 of `11-2 11-4 11-3` moves ratings about twice as hard as a 3–0 of
-`12-10 11-9 13-11`, even though both are 3–0.
-
-Two deliberate choices here:
-
-- **It's measured on the match total, not game by game.** A `11-1 / 1-11 / 11-1`
-  thriller averages out to a close match — which is what it was — instead of
-  reading as three blowouts.
-- **It's capped at ×0.6 and ×1.4.** Point margins are noisy. One 11-0 shouldn't
-  be able to rewrite the ladder, and a single deuce shouldn't erase a win.
-
-### 4. How much one match is allowed to move you — K
+### 4 · How much one game may move you — K
 
 | Situation | K |
 |---|---|
-| Your first 20 matches (provisional) | 48 |
-| After that | 32 |
+| Your first 50 **games** (provisional) | 16 |
+| After that | 11 |
 | Doubles | ×0.75 of the above |
 
-New players move fast so they reach roughly the right level in a few nights
-rather than a season. Doubles counts for 75% because you only control half of a
-doubles match.
+Counted in games rather than sessions, because a session can be any length. New
+players move fast so they reach roughly the right level in a few sessions rather
+than a season. Doubles counts 75% because you only control half of a doubles
+match.
 
-### Putting it together — a full worked example
+### Plus one correction: the favourite's blowout counts for less
 
-> **Alice (1000)** beats **Bob (1150)** 3–1: `11-8  9-11  11-6  11-7`.
-> Both have played plenty of matches.
+A strong player is *expected* to win by a lot, so their 11-2 says less about
+them than the same 11-2 would say about an underdog. Without correcting for
+this, margin-of-victory quietly inflates the already-strong — a well-known flaw
+in naive MOV systems.
 
-| Step | Working | Value |
-|---|---|---|
-| Games | Alice 3, Bob 1 | **S = 0.75** |
-| Expected | Bob is 150 above, so Alice is expected to take ~30% | **E = 0.297** |
-| Points | 42–32 over 4 games = 2.5 a game | **margin = ×0.778** |
-| K | established, singles | **K = 32** |
+So the margin multiplier is scaled by the rating gap **of that game's winner over
+its loser**: a 400-point favourite winning gets ×0.85, a 400-point underdog
+winning gets ×1.22. It applies identically to both sides, so the books still
+balance.
 
-```
-change = 32 × 0.778 × (0.75 − 0.297) = +11.3  →  +11
-```
+---
 
-**Alice 1000 → 1011. Bob 1150 → 1139.** Alice gains exactly what Bob loses.
+### What this looks like in practice
 
-### What that looks like in practice
-
-Real numbers from the code, for two **equally rated** established players:
+**Three games against an equal player:**
 
 | Result | Change |
 |---|---|
-| 3–0 whitewash `11-2 11-4 11-3` | **+22** |
-| 3–0 normal `11-7 11-9 11-8` | **+14** |
-| 3–0 nail-biter `12-10 11-9 13-11` | **+11** |
-| 2–1 win `11-7 9-11 11-5` | **+4** |
-| 1–1 split | **0** |
-| 0–2 loss `7-11 5-11` | **−18** |
+| 3–0 whitewash `11-2 11-4 11-3` | **+26** |
+| 3–0 normal `11-7 11-9 11-8` | **+13** |
+| 3–0 every game a deuce `12-10 11-9 13-11` | **+9** |
+| 2–1 `11-7 9-11 11-5` | **+10** |
 
-And the same 3–0 `11-7 11-9 11-8`, against different opposition:
+Yes — a 2–1 of comfortable wins (+10) edges out a 3–0 of three deuces (+9). A
+3–0 where every game went to deuce genuinely *is* a closer session than winning
+two games easily and dropping one, and the model is allowed to say so.
 
-| Opponent | Change |
+**Session length matters** (winning every game 11-7, against an equal):
+
+| Games | Change |
 |---|---|
-| 400 above you | **+25** |
-| 200 above you | **+21** |
-| level with you | **+14** |
-| 200 below you | **+7** |
-| 400 below you | **+3** |
+| 1 | +6 |
+| 3 | +17 |
+| 5 | +28 |
+| 10 | +55 |
+| 20 | +110 |
 
-Losing is the mirror image: losing to someone 400 above you costs **−3**; losing
-to someone 400 below costs **−25**.
+**A 10-game session against an equal:**
+
+| You won | Change |
+|---|---|
+| 10 of 10 | +55 |
+| 8 of 10 | +33 |
+| 7 of 10 | +22 |
+| **5 of 10** | **0** |
+| 3 of 10 | −22 |
+| 0 of 10 | −55 |
+
+**The same 3–0 `11-7 11-9 11-8`, against different opposition:**
+
+| Opponent | You win | You lose 0–3 |
+|---|---|---|
+| 400 above you | **+29** | −2 |
+| 200 above you | **+22** | −6 |
+| level | **+13** | −13 |
+| 200 below you | **+6** | −22 |
+| 400 below you | **+2** | **−29** |
+
+**The big upset** — a 1000 beating a 1400:
+
+| | |
+|---|---|
+| 3–0 whitewash | **+58** |
+| 3–0 normal | **+29** |
+| 2–1 | **+28** |
+| 7 of 10 games | **+83** |
 
 ### Doubles
 
@@ -247,62 +275,80 @@ The pair is rated at the **average** of the two partners, both partners take the
 
 | They beat | Each of them gets |
 |---|---|
-| two 1050s (par — exactly what's expected) | **+10** |
-| two 1200s (an upset) | **+15** |
+| two 1050s (par — exactly what's expected) | a little |
+| two 1200s (an upset) | a lot |
 
 Carrying a weaker partner past a pair you should beat is worth little; doing it
-against a pair you shouldn't is worth a lot. Neither partner is punished for who
-they were drawn with.
+against a pair you shouldn't is worth plenty. Neither partner is punished for
+who they were drawn with.
+
+---
 
 ### Questions people ask
 
-**I won — why did I only get 3 points?**
-You were expected to win. Beating someone 400 below you is what the ladder
-already predicted, so it barely updates. The flip side is that losing that match
-costs you 25.
+**I won and my rating went DOWN. Is that broken?**
+No, and this is the one that surprises people. If you're rated 1400 and beat a
+1000 by 2–1, you lose **5 points** — you were expected to take about 9 games in
+10, and 2–1 is well short of that. Beating them 3–0 normally gains +2. Against
+someone far below you, only a convincing win is worth anything, and a scrappy
+one is evidence the gap isn't as wide as your rating claims.
 
 **Can I farm a weak player to climb?**
-No. Rated 1400 and beating a 1000 over and over gives +3, then +2, +2, +2, +2…
-Each win narrows the gap you have left to prove, and it converges to nothing.
-Meanwhile one loss to them costs you 25 — several nights' farming, gone.
+Not really. Rated 1400 beating a 1000 3–0 gains **+2**. Then less. Then less
+again — each win narrows the gap you have left to prove, and once you're ~750
+ahead a win gains literally nothing. Grinding the ceiling out takes over a
+thousand games, and every one of them drags your victim's rating down toward
+you, closing the gap from the other side too. Meanwhile a single loss to them
+costs you −29. And `/tt history` shows everyone the same two names over and over.
 
-**Does a best-of-five count for more than a best-of-three?**
-No. Elo rates the *share* of games won, not how many you played. Playing more
-games doesn't mean you've earned more rating. Winning them more convincingly
-does — that's what the margin multiplier is for.
+**Does playing more games get me more rating?**
+Only if you keep winning them. More games means more movement in *whichever*
+direction you earned — a 20-game session you lose 6–14 costs far more than a
+3-game one. It cuts exactly as hard both ways.
 
 **Is the total rating in the system conserved?**
-Between two established players, yes exactly — the winner gains precisely what
-the loser drops, and a doubles result nets to zero across all four. The one
-exception is deliberate: a provisional player carries a bigger K than their
-established opponent, so a newcomer's early matches add a few points to the pool.
-Converging newcomers quickly is worth more than a perfectly closed system.
+Between two established players, exactly — the winner gains precisely what the
+loser drops, at any session length, and a doubles result nets to zero across all
+four. The one exception is deliberate: a provisional player carries a bigger K
+than their established opponent, so a newcomer's early games add a few points to
+the pool. Converging newcomers quickly is worth more than a perfectly closed
+system.
+
+**Why is a nail-biting 3–0 worth less than a comfortable 2–1?**
+Because the points say the first session was closer. See the table above.
 
 **What stops someone logging a result that never happened?**
-They can't confirm their own match — only the other side can, and either player
-can throw it out with one button. Ratings only move on a result someone it
-*costs* has signed off on.
+They can't confirm their own session — only the other side can, and either
+player can throw it out with one button. Ratings only move on a result someone
+it *costs* has signed off on.
 
 **Someone confirmed a typo. Now what?**
-Whoever logged it runs `/tt undo`. That restores a snapshot of every player taken
-just before the match, so it's exact. It's refused once any player in that match
+Whoever logged it runs `/tt undo`. That restores a snapshot of every player
+taken just before the session, so it's exact. It's refused once any player in it
 has played again — rewinding them would silently erase the later result too. At
-that point, just play a correcting match.
+that point, just play a correcting session.
 
 **Can my rating go below zero?**
 It floors at 100.
 
 **Why don't I appear on the board?**
-Five matches to qualify. Before that you're in the *Still placing* line — your
+Fifteen games to qualify. Before that you're in the *Still placing* line — your
 rating exists and moves, it just isn't ranked yet.
 
 ### Changing the numbers
 
 Every constant above is a named value at the top of [elo.py](elo.py) —
-`START_RATING`, `K_ESTABLISHED`, `K_PROVISIONAL`, `PROVISIONAL_MATCHES`,
-`DOUBLES_K_FACTOR`, `MOV_BASELINE`, `MOV_MIN`/`MOV_MAX`, `RATING_FLOOR` — plus
-`PLACEMENT_MATCHES` in [bot.py](bot.py). Change one, run `pytest`, redeploy.
-Ratings already recorded are not recalculated.
+`START_RATING`, `K_ESTABLISHED`, `K_PROVISIONAL`, `PROVISIONAL_GAMES`,
+`DOUBLES_K_FACTOR`, `MOV_BASELINE`, `MOV_GAIN`, `MOV_MIN`/`MOV_MAX`,
+`UPSET_SCALE`, `RATING_FLOOR` — plus `PLACEMENT_GAMES` in [bot.py](bot.py).
+Change one, run `pytest`, redeploy. Ratings already recorded are not
+recalculated.
+
+Two knobs do most of the tuning:
+
+- **`MOV_GAIN`** — how much the scoreline matters. At 1.0 a whitewash is worth
+  2× a deuce-fest; at the current 1.5 it's ~2.9×; at 2.0, ~4.3×.
+- **`K_ESTABLISHED`** — overall volatility. Everything scales with it.
 
 ---
 

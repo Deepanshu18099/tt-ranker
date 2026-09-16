@@ -141,3 +141,26 @@ def test_odds_needs_no_scores():
     assert parsing.parse_odds(f"{m(BOB)}", caller=ME) == ([ME], [BOB])
     assert parsing.parse_odds(f"{m(BOB)} vs {m(CAL)} {m(DEE)}", caller=ME) == \
         ([ME, BOB], [CAL, DEE])
+
+
+# --- deuce -----------------------------------------------------------------
+
+@pytest.mark.parametrize("score,expected", [
+    ("11-9", (11, 9)), ("13-11", (13, 11)), ("15-13", (15, 13)),
+    ("18-16", (18, 16)), ("21-19", (21, 19)), ("25-23", (25, 23)),
+])
+def test_deuce_and_extended_deuce_scores_are_accepted(score, expected):
+    """A game can go to deuce repeatedly — 25-23 is a real table tennis score."""
+    assert parse(f"{m(BOB)} {score}")["games"] == [expected]
+
+
+def test_a_whole_session_of_deuce_games():
+    r = parse(f"{m(BOB)} 12-10 15-13 18-16 11-13 21-19")
+    assert r["games"] == [(12, 10), (15, 13), (18, 16), (11, 13), (21, 19)]
+
+
+def test_win_by_two_is_not_enforced():
+    """Office rules vary — some play straight to 11, some first to 7. Rejecting
+    anything that isn't win-by-two would throw out legitimate casual scores."""
+    assert parse(f"{m(BOB)} 11-10")["games"] == [(11, 10)]
+    assert parse(f"{m(BOB)} 7-5")["games"] == [(7, 5)]

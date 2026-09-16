@@ -42,9 +42,10 @@ DISPUTE_ACTION = "tt_dispute"
 # puts you on the ladder. standings.py reads the same variable for its own copy.
 HOME_CHANNEL = os.environ.get("TT_CHANNEL", "")
 
-# Below this many matches a rating says more about luck than about the player,
-# so they sit in a "still placing" line instead of the ladder proper.
-PLACEMENT_MATCHES = 5
+# Below this many *games* a rating says more about luck than about the player,
+# so they sit in a "still placing" line instead of the ladder proper. Counted in
+# games rather than sessions, because one session can be 2 games or 20.
+PLACEMENT_GAMES = 15
 BOARD_LIMIT = 20
 # Guard on /tt sync: a ladder is a room of people who play each other, and
 # anything past this is someone running it in the wrong channel.
@@ -414,6 +415,72 @@ WELCOME = (
 )
 
 
+INTRO = f""":table_tennis_paddle_and_ball: *Welcome to the table tennis ladder*
+
+Everyone here has an Elo rating. Play some games, log them, and the ladder \
+sorts itself out. You start at *{elo.START_RATING}*.
+
+*1 · Play as many games as you have time for*
+No fixed match length. Two games at lunch, fifteen on a Friday — both count, \
+and the longer one counts for more.
+
+*2 · Log it*
+```
+/tt log @opponent 11-7 9-11 11-5
+```
+That's the points in each game. Or just type `/tt log` and fill in a form.
+Doubles: `/tt log @partner vs @dan @eve 11-7 11-9`
+
+*3 · The other side confirms*
+Your opponent gets a :white_check_mark: button. Nothing moves until they press \
+it — you can't wave through your own result. Wrong scores? They press \
+:x: and you log it again. Ignored for {store.AUTO_CONFIRM_HOURS}h, it applies \
+on its own.
+
+*What moves your rating*
+• Beating someone above you is worth a lot. Beating someone below you, very little.
+• Losing to someone below you hurts; losing to someone above you barely registers.
+• Winning *convincingly* counts more than scraping through — the points matter, \
+not just who won.
+• More games = more movement, because it's more evidence.
+
+You can't climb by farming one weak opponent: each win against them earns less \
+than the last, and it drags their rating down to meet yours.
+
+*The commands*
+`/tt board` the ladder · `/tt me` your card · `/tt history` recent results
+`/tt odds @someone` who's favoured · `/tt help` everything else
+
+_Anyone who joins this channel is added automatically. \
+{PLACEMENT_GAMES} games to appear on the board._
+_Full scoring detail: <https://github.com/praneatdata/tt-ranker#how-your-rating-is-calculated|how the rating is calculated>._"""
+
+CHANNEL_TOPIC = (":table_tennis_paddle_and_ball: Office table tennis ladder — "
+                 "`/tt log @opponent 11-7 9-11 11-5` · `/tt board` for standings")
+
+CHANNEL_DESCRIPTION = (
+    "Where the office table tennis ladder lives. Play however many games you "
+    "have time for, log them with /tt log, your opponent confirms, ratings "
+    "move. Everyone who joins is added automatically. /tt help to get started."
+)
+
+
+def handle_intro(command, respond, client, logger=None):
+    """`/tt intro` — post the how-it-works message, for pinning to the channel.
+
+    A command rather than a wiki page so it can never drift from what the bot
+    actually does: the thresholds in it are the constants the code runs on.
+    """
+    try:
+        client.chat_postMessage(channel=command["channel_id"], text=INTRO)
+    except Exception as e:
+        (logger or log).warning("intro post failed: %s", e)
+        respond(INTRO)  # at least show the caller
+        return
+    respond(":pushpin: Posted — pin it so new players find it "
+            "(hover the message → ⋯ → *Pin to channel*).")
+
+
 def handle_member_joined(event, client=None, context=None, logger=None):
     """Put anyone who joins the ladder's home channel on the ladder.
 
@@ -505,7 +572,7 @@ def handle_me(command, respond, bot_id=None):
                 "`/tt register`, or just play a match and I'll add them.")
         return
 
-    played = player["matches"]
+    played = elo.games_played(player)
     decided = player["wins"] + player["losses"]
     rate = f" ({round(100 * player['wins'] / decided)}%)" if decided else ""
     rank, total = _rank_of(uid)
@@ -519,11 +586,13 @@ def handle_me(command, respond, bot_id=None):
         f"*Peak*  {player['peak']}   ·   *Streak*  {fmt_streak(player['streak'])}"
         + (f"   ·   *Best*  {player['best_streak']}" if player["best_streak"] > 1 else ""),
     ]
-    if played < PLACEMENT_MATCHES:
-        lines.append(f"_{PLACEMENT_MATCHES - played} more match"
-                     f"{'es' if PLACEMENT_MATCHES - played > 1 else ''} to join the ladder._")
+    if played < PLACEMENT_GAMES:
+        left = PLACEMENT_GAMES - played
+        lines.append(f"_{left} more game{'s' if left > 1 else ''} to join the ladder._")
     else:
-        lines.append(f"_{played} matches · last played {fmt_ago(player['last_played'])}._")
+        lines.append(f"_{played} games over {player['matches']} session"
+                     f"{'s' if player['matches'] != 1 else ''} · "
+                     f"last played {fmt_ago(player['last_played'])}._")
     respond("\n".join(lines))
 
 
@@ -539,8 +608,9 @@ def _rank_of(uid):
 def ranked_players(players):
     """[(uid, record)] for everyone past placement, strongest first. Ties break
     on matches played, so the person who has actually shown up ranks higher."""
-    placed = [(u, p) for u, p in players.items() if p["matches"] >= PLACEMENT_MATCHES]
-    return sorted(placed, key=lambda item: (-item[1]["rating"], -item[1]["matches"], item[0]))
+    placed = [(u, p) for u, p in players.items() if elo.games_played(p) >= PLACEMENT_GAMES]
+    return sorted(placed, key=lambda item: (-item[1]["rating"],
+                                            -elo.games_played(item[1]), item[0]))
 
 
 def board_text(players, limit=BOARD_LIMIT, title="Table tennis ladder"):
@@ -557,15 +627,16 @@ def board_text(players, limit=BOARD_LIMIT, title="Table tennis ladder"):
             row += f"  ·  {fmt_streak(p['streak'])}"
         lines.append(row)
     if not ranked:
-        lines.append(f"_No one has played {PLACEMENT_MATCHES} matches yet._")
+        lines.append(f"_No one has played {PLACEMENT_GAMES} games yet._")
     if len(ranked) > limit:
         lines.append(f"_…and {len(ranked) - limit} more._")
 
-    placing = sorted(((u, p) for u, p in players.items() if p["matches"] < PLACEMENT_MATCHES),
-                     key=lambda item: (-item[1]["matches"], item[0]))
+    placing = sorted(((u, p) for u, p in players.items()
+                      if elo.games_played(p) < PLACEMENT_GAMES),
+                     key=lambda item: (-elo.games_played(item[1]), item[0]))
     if placing:
-        who = ", ".join(f"<@{u}> ({p['matches']})" for u, p in placing[:10])
-        lines.append(f"\n_Still placing ({PLACEMENT_MATCHES} matches to qualify): {who}_")
+        who = ", ".join(f"<@{u}> ({elo.games_played(p)})" for u, p in placing[:10])
+        lines.append(f"\n_Still placing ({PLACEMENT_GAMES} games to qualify): {who}_")
     return "\n".join(lines)
 
 
@@ -639,7 +710,7 @@ def handle_odds(command, respond, bot_id=None):
         return
     players = store.load_for_match(side_a + side_b)
     entries = lambda side: [{"uid": u, "rating": players[u]["rating"],
-                             "matches": players[u]["matches"]} for u in side]
+                             "games": elo.games_played(players[u])} for u in side]
     chance = elo.win_probability(entries(side_a), entries(side_b))
     ra, rb = elo.team_rating(entries(side_a)), elo.team_rating(entries(side_b))
     respond(f":crystal_ball: {fmt_side(side_a)} *{round(100 * chance)}%*  ·  "
@@ -655,22 +726,27 @@ HELP = f""":table_tennis_paddle_and_ball: *TT Ranker* — the office table tenni
 • `/tt log @partner vs @dan @eve 11-7 11-9` — doubles
 • `/tt log @ann @bob vs @cal @dee 11-7 11-9` — record someone else's match
 
-Scores are the points in each game. The other side confirms it, then ratings \
-move. Unconfirmed matches apply on their own after {store.AUTO_CONFIRM_HOURS}h.
+Scores are the points in each game — log as many games as you played, there's \
+no fixed length. The other side confirms it, then ratings move. Unconfirmed \
+results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 
 *Everything else*
 • `/tt board` — the ladder      • `/tt me [@player]` — one player's card
 • `/tt history [@player]` — recent results    • `/tt pending` — awaiting confirmation
 • `/tt odds @bob` — who's favoured    • `/tt undo` — revert the last match you logged
 • `/tt register` — join early    • `/tt sync` — add everyone in this channel
+• `/tt intro` — post the how-it-works message, for pinning
 
 *How the rating works*
-Everyone starts at *{elo.START_RATING}*. A match moves you by \
-`K × margin × (games won − games expected)`, so beating someone above you is \
-worth more, a whitewash beats a squeaker, and doubles counts \
-{int(elo.DOUBLES_K_FACTOR * 100)}% as hard as singles. You're provisional \
-(bigger swings) for your first {elo.PROVISIONAL_MATCHES} matches and join the \
-ladder proper after {PLACEMENT_MATCHES}."""
+Everyone starts at *{elo.START_RATING}*. *Every game is rated on its own and \
+they add up* — so 10 games count for more than 3, and a session that splits \
+evenly moves nobody. Each game is worth more when you beat someone above you, \
+more when you win it decisively, and less when a big favourite wins it. \
+Doubles counts {int(elo.DOUBLES_K_FACTOR * 100)}% as hard as singles.
+
+You're provisional (bigger swings) for your first {elo.PROVISIONAL_GAMES} games \
+and join the ladder proper after {PLACEMENT_GAMES}. Full details: \
+<https://github.com/praneatdata/tt-ranker#how-your-rating-is-calculated|the README>."""
 
 
 # --- routing ---------------------------------------------------------------
@@ -706,6 +782,8 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_odds(command, respond, bot_id)
         elif sub == "sync":
             handle_sync(command, respond, client, context, logger=logger)
+        elif sub == "intro":
+            handle_intro(command, respond, client, logger=logger)
         else:
             respond(HELP)
     except Exception:

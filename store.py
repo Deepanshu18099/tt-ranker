@@ -268,8 +268,9 @@ def apply_match(record, confirmed_by=None, auto=False, now=None):
     players = load_for_match(uids, now)
 
     def entries(side):
-        return [{"uid": u, "rating": players[u]["rating"], "matches": players[u]["matches"]}
-                for u in side]
+        # K is measured in games played, not sessions — a session is any length.
+        return [{"uid": u, "rating": players[u]["rating"],
+                 "games": elo.games_played(players[u])} for u in side]
 
     rated = elo.rate_match(entries(side_a), entries(side_b), record["games"])
     mid = record["id"]

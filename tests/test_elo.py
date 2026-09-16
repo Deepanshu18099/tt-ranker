@@ -5,8 +5,10 @@ import pytest
 import elo
 
 
-def P(uid, rating=1000, matches=50):
-    return {"uid": uid, "rating": rating, "matches": matches}
+def P(uid, rating=1000, games=200):
+    """A player. `games` drives K — 200 is comfortably out of the provisional
+    period, so most tests here compare established players."""
+    return {"uid": uid, "rating": rating, "games": games}
 
 
 def rate(a, b, games):
@@ -14,9 +16,15 @@ def rate(a, b, games):
                           [b] if isinstance(b, dict) else b, games)
 
 
-SWEEP = [(11, 2), (11, 4), (11, 3)]
-TIGHT_SWEEP = [(12, 10), (11, 9), (13, 11)]
-CLOSE_WIN = [(11, 7), (9, 11), (11, 5)]
+def gain(a, b, games, who=None):
+    r = rate(a, b, games)
+    return r["deltas"][who or (a if isinstance(a, dict) else a[0])["uid"]]
+
+
+SWEEP = [(11, 2), (11, 4), (11, 3)]          # 3-0, decisive
+NORMAL = [(11, 7), (11, 9), (11, 8)]         # 3-0, ordinary
+TIGHT = [(12, 10), (11, 9), (13, 11)]        # 3-0, every game a deuce
+CLOSE_WIN = [(11, 7), (9, 11), (11, 5)]      # 2-1
 
 
 # --- expectation -----------------------------------------------------------
@@ -35,79 +43,130 @@ def test_expectations_sum_to_one():
 
 # --- margin of victory -----------------------------------------------------
 
-def test_mov_is_one_at_a_normal_margin():
-    """Par is 4 points a game across the match — roughly a 3-0 of 11-7s. A real
-    3-0 (11-7 11-9 11-8) sits just under; a whitewash well over."""
-    assert elo.mov_multiplier(33, 21, 3) == pytest.approx(1.0)
-    assert elo.mov_multiplier(33, 24, 3) < 1.0 < elo.mov_multiplier(33, 9, 3)
+def test_mov_is_one_at_a_normal_game_margin():
+    assert elo.mov_multiplier(elo.MOV_BASELINE) == pytest.approx(1.0)
 
 
 def test_mov_rises_with_the_margin_and_stays_clamped():
-    squeaker = elo.mov_multiplier(36, 30, 3)
-    blowout = elo.mov_multiplier(33, 9, 3)
-    assert elo.MOV_MIN <= squeaker < 1.0 < blowout <= elo.MOV_MAX
-    assert elo.mov_multiplier(99, 0, 1) == elo.MOV_MAX
-    assert elo.mov_multiplier(11, 10, 1) == elo.MOV_MIN
+    assert elo.mov_multiplier(2) < elo.mov_multiplier(4) < elo.mov_multiplier(9)
+    assert elo.mov_multiplier(1) == elo.MOV_MIN
+    assert elo.mov_multiplier(99) == elo.MOV_MAX
 
 
-def test_mov_reads_the_match_not_the_loudest_game():
-    """11-1 / 1-11 / 11-1 was a close match, not three blowouts — measuring on
-    the match total lets the swings cancel the way they actually did."""
-    swingy = elo.mov_multiplier(23, 13, 3)
-    consistent = elo.mov_multiplier(33, 9, 3)
-    assert swingy < consistent
+def test_mov_ignores_which_side_won():
+    """It scales the size of the swing; `expected` decides the direction."""
+    assert elo.mov_multiplier(-7) == elo.mov_multiplier(7)
+
+
+def test_a_whitewash_moves_about_three_times_a_deuce_fest():
+    """The margin knob, stated as the ratio players will actually notice."""
+    sweep, tight = gain(P("a"), P("b"), SWEEP), gain(P("a"), P("b"), TIGHT)
+    assert 2.5 < sweep / tight < 3.3
+
+
+# --- the upset correction --------------------------------------------------
+
+def test_the_upset_correction_is_neutral_between_equals():
+    assert elo.upset_correction(0) == pytest.approx(1.0)
+
+
+def test_a_favourites_big_win_counts_for_less_than_an_underdogs():
+    assert elo.upset_correction(400) < 1.0 < elo.upset_correction(-400)
+
+
+def test_the_correction_can_never_flip_the_sign_of_an_update():
+    """Its denominator reaches zero at a gap of -2200; unclamped, anything past
+    that would hand the points to the loser."""
+    assert elo.upset_correction(-100000) > 0
+    assert elo.upset_correction(100000) > 0
+
+
+# --- every game is rated on its own ----------------------------------------
+
+def test_more_games_move_a_rating_further():
+    """The point of per-game scoring: a long session is more evidence, so it
+    counts for more. Sessions are whatever length people had time for."""
+    three = gain(P("a"), P("b"), [(11, 7)] * 3)
+    ten = gain(P("a"), P("b"), [(11, 7)] * 10)
+    assert ten > three > 0
+    assert 3.0 < ten / three < 3.7          # roughly linear in games played
+
+
+def test_a_session_that_splits_evenly_moves_nobody():
+    r = rate(P("a"), P("b"), [(11, 7)] * 5 + [(7, 11)] * 5)
+    assert r["deltas"] == {"a": 0, "b": 0}
+
+
+def test_losses_inside_a_session_cancel_wins():
+    ten_nil = gain(P("a"), P("b"), [(11, 7)] * 10)
+    seven_three = gain(P("a"), P("b"), [(11, 7)] * 7 + [(7, 11)] * 3)
+    assert ten_nil > seven_three > 0
+
+
+def test_a_swingy_session_is_read_as_the_close_thing_it_was():
+    """11-1 / 1-11 / 11-1 is a close session, not three blowouts — the lost game
+    cancels most of what the won ones earned."""
+    swingy = gain(P("a"), P("b"), [(11, 1), (1, 11), (11, 1)])
+    consistent = gain(P("a"), P("b"), SWEEP)
+    assert 0 < swingy < consistent
+
+
+def test_a_single_game_is_a_valid_session():
+    r = rate(P("a"), P("b"), [(11, 6)])
+    assert (r["games_a"], r["games_b"]) == (1, 0)
+    assert r["deltas"]["a"] > 0
 
 
 # --- singles ---------------------------------------------------------------
 
 def test_winner_gains_exactly_what_the_loser_drops():
     r = rate(P("a"), P("b"), CLOSE_WIN)
-    assert r["deltas"]["a"] == -r["deltas"]["b"]
-    assert r["deltas"]["a"] > 0
+    assert r["deltas"]["a"] == -r["deltas"]["b"] > 0
+
+
+@pytest.mark.parametrize("games", [SWEEP, NORMAL, TIGHT, CLOSE_WIN, [(11, 7)] * 12])
+@pytest.mark.parametrize("ra,rb", [(1000, 1400), (1000, 1000), (1300, 900), (700, 1500)])
+def test_the_pool_is_conserved_whatever_the_result(games, ra, rb):
+    assert sum(rate(P("a", ra), P("b", rb), games)["deltas"].values()) == 0
 
 
 def test_a_whitewash_beats_a_squeaker():
-    sweep = rate(P("a"), P("b"), SWEEP)["deltas"]["a"]
-    tight = rate(P("a"), P("b"), TIGHT_SWEEP)["deltas"]["a"]
-    assert sweep > tight > 0
+    assert gain(P("a"), P("b"), SWEEP) > gain(P("a"), P("b"), TIGHT) > 0
 
 
-def test_winning_three_nil_beats_winning_two_one():
-    three_nil = rate(P("a"), P("b"), TIGHT_SWEEP)["deltas"]["a"]
-    two_one = rate(P("a"), P("b"), CLOSE_WIN)["deltas"]["a"]
-    assert three_nil > two_one > 0
+def test_winning_three_nil_beats_winning_two_one_at_the_same_margins():
+    """Like for like. A 3-0 of three deuces is a genuinely closer session than a
+    2-1 of comfortable wins, and the model is allowed to say so."""
+    assert gain(P("a"), P("b"), NORMAL) > gain(P("a"), P("b"), CLOSE_WIN) > 0
 
 
 def test_beating_someone_stronger_is_worth_more():
-    upset = rate(P("a", 900), P("b", 1300), SWEEP)["deltas"]["a"]
-    expected_win = rate(P("a", 1300), P("b", 900), SWEEP)["deltas"]["a"]
-    assert upset > expected_win > 0
+    assert gain(P("a", 900), P("b", 1300), SWEEP) > gain(P("a", 1300), P("b", 900), SWEEP) > 0
 
 
 def test_losing_to_someone_stronger_costs_less():
-    to_better = rate(P("a", 900), P("b", 1300), [(2, 11), (4, 11)])["deltas"]["a"]
-    to_worse = rate(P("a", 1300), P("b", 900), [(2, 11), (4, 11)])["deltas"]["a"]
+    to_better = gain(P("a", 900), P("b", 1300), [(2, 11), (4, 11)])
+    to_worse = gain(P("a", 1300), P("b", 900), [(2, 11), (4, 11)])
     assert to_worse < to_better < 0
 
 
-def test_an_even_split_between_equals_moves_nobody():
-    r = rate(P("a"), P("b"), [(11, 7), (7, 11)])
-    assert r["deltas"] == {"a": 0, "b": 0}
-    assert r["score_a"] == 0.5
+def test_scraping_past_someone_far_below_you_can_cost_rating():
+    """Not a bug: you were expected to take about 9 games in 10, and 2-1 is
+    well short of that. The README says so in as many words."""
+    assert gain(P("a", 1400), P("b", 1000), CLOSE_WIN) < 0
 
 
 def test_provisional_players_move_faster():
-    new = rate(P("a", matches=0), P("b", matches=0), SWEEP)["deltas"]["a"]
-    old = rate(P("a", matches=99), P("b", matches=99), SWEEP)["deltas"]["a"]
+    new = gain(P("a", games=0), P("b", games=0), NORMAL)
+    old = gain(P("a", games=500), P("b", games=500), NORMAL)
     assert new > old > 0
     assert elo.k_factor(0) == elo.K_PROVISIONAL
-    assert elo.k_factor(elo.PROVISIONAL_MATCHES) == elo.K_ESTABLISHED
+    assert elo.k_factor(elo.PROVISIONAL_GAMES) == elo.K_ESTABLISHED
 
 
-def test_a_single_game_is_a_valid_match():
-    r = rate(P("a"), P("b"), [(11, 6)])
-    assert r["games_a"] == 1 and r["games_b"] == 0
-    assert r["deltas"]["a"] > 0
+def test_the_provisional_period_is_counted_in_games():
+    assert elo.games_played({"games_won": 12, "games_lost": 9}) == 21
+    assert elo.games_played({}) == 0
 
 
 def test_rating_never_falls_through_the_floor():
@@ -137,17 +196,17 @@ def test_doubles_conserves_the_rating_pool():
 
 
 def test_doubles_counts_for_less_than_singles():
-    doubles = rate([P("a1"), P("a2")], [P("b1"), P("b2")], SWEEP)["deltas"]["a1"]
-    singles = rate(P("a1"), P("b1"), SWEEP)["deltas"]["a1"]
+    doubles = gain([P("a1"), P("a2")], [P("b1"), P("b2")], SWEEP, who="a1")
+    singles = gain(P("a1"), P("b1"), SWEEP)
     assert 0 < doubles < singles
 
 
 def test_carrying_a_weaker_partner_is_worth_little():
     """1200+900 beating two 1050s is par, so it barely moves; the same pair
     beating two 1200s is an upset and moves plenty."""
-    par = rate([P("a1", 1200), P("a2", 900)], [P("b1", 1050), P("b2", 1050)], SWEEP)
-    upset = rate([P("a1", 1200), P("a2", 900)], [P("b1", 1200), P("b2", 1200)], SWEEP)
-    assert upset["deltas"]["a1"] > par["deltas"]["a1"] > 0
+    par = gain([P("a1", 1200), P("a2", 900)], [P("b1", 1050), P("b2", 1050)], SWEEP, "a1")
+    upset = gain([P("a1", 1200), P("a2", 900)], [P("b1", 1200), P("b2", 1200)], SWEEP, "a1")
+    assert upset > par > 0
 
 
 # --- tallying --------------------------------------------------------------
@@ -158,3 +217,34 @@ def test_tally_counts_games_and_points():
 
 def test_score_is_the_share_of_games_won():
     assert rate(P("a"), P("b"), CLOSE_WIN)["score_a"] == pytest.approx(2 / 3, abs=1e-3)
+
+
+# --- deuce -----------------------------------------------------------------
+
+def test_a_deuce_game_is_a_deuce_game_however_long_it_ran():
+    """Won by two is won by two. Only the margin is read, never the totals, so
+    a 31-29 marathon and an 11-9 count identically."""
+    assert elo.mov_multiplier(2) == elo.mov_multiplier(2)
+    for score in ([(11, 9)], [(15, 13)], [(21, 19)], [(31, 29)]):
+        assert gain(P("a"), P("b"), score) == gain(P("a"), P("b"), [(11, 9)])
+
+
+def test_every_deuce_game_earns_the_smallest_multiplier():
+    assert elo.mov_multiplier(2) < elo.mov_multiplier(3)
+    assert all(elo.mov_multiplier(hi - lo) == elo.mov_multiplier(2)
+               for hi, lo in ((11, 9), (13, 11), (18, 16), (25, 23)))
+
+
+def test_a_session_of_deuce_battles_barely_moves_anyone():
+    deuces = gain(P("a"), P("b"), [(12, 10), (15, 13), (18, 16)])
+    routine = gain(P("a"), P("b"), NORMAL)
+    assert 0 < deuces < routine
+
+
+def test_game_length_does_not_leak_into_the_maths():
+    """Points totals are recorded for the player card; the rating reads only the
+    per-game margin. A long game must not count as a bigger win."""
+    long_deuce = rate(P("a"), P("b"), [(21, 19)])
+    short_deuce = rate(P("a"), P("b"), [(11, 9)])
+    assert long_deuce["deltas"] == short_deuce["deltas"]
+    assert long_deuce["points_a"] != short_deuce["points_a"]   # still recorded

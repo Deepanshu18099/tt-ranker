@@ -253,7 +253,7 @@ def test_the_board_separates_the_settled_from_the_settling(fake, client):
 
 
 def test_the_board_is_ordered_by_rating(fake, client, monkeypatch):
-    monkeypatch.setattr(bot, "PLACEMENT_MATCHES", 1)
+    monkeypatch.setattr(bot, "PLACEMENT_GAMES", 1)
     run(f"log <@{B}> 11-2 11-3", client)
     press(bot.handle_confirm, posted_mid(client), B, client)
     board = bot.board_text(store.all_players())
@@ -507,3 +507,70 @@ def test_a_form_match_that_cannot_be_posted_is_explained_by_dm(fake, client):
     submit(form_state([A], [B], "11-7"), client)
     assert client.chat_postMessage.call_args.kwargs["channel"] == A   # DM to the logger
     assert store.list_pending() == []
+
+
+# --- the pinnable intro ----------------------------------------------------
+
+def test_intro_posts_the_how_it_works_message(fake, client):
+    respond = run("intro", client)
+    posted = said(client.chat_postMessage)
+    assert "Welcome to the table tennis ladder" in posted
+    assert "/tt log @opponent" in posted
+    assert "Pin to channel" in said(respond)
+
+
+def test_the_intro_quotes_the_constants_the_code_actually_runs_on(fake, client):
+    """It's a command rather than a wiki page precisely so it can't drift."""
+    run("intro", client)
+    posted = said(client.chat_postMessage)
+    assert str(elo.START_RATING) in posted
+    assert str(bot.PLACEMENT_GAMES) in posted
+    assert str(store.AUTO_CONFIRM_HOURS) in posted
+
+
+def test_intro_falls_back_to_showing_the_caller(fake, client):
+    client.chat_postMessage.side_effect = Exception("not_in_channel")
+    assert "Welcome to the table tennis ladder" in said(run("intro", client))
+
+
+@pytest.mark.parametrize("alias", ["intro", "welcome", "rules", "howto"])
+def test_intro_aliases(alias):
+    import parsing
+    assert parsing.split_subcommand(alias)[0] == "intro"
+
+
+# --- per-game scoring, end to end -----------------------------------------
+
+def test_a_longer_session_moves_ratings_further(fake, client):
+    run(f"log <@{B}> " + " ".join(["11-7"] * 3), client)
+    press(bot.handle_confirm, posted_mid(client), B, client)
+    short = fake.rating(A) - elo.START_RATING
+
+    run(f"log <@{C}> " + " ".join(["11-7"] * 10), client)
+    press(bot.handle_confirm, posted_mid(client), C, client)
+    long_ = fake.rating(A) - elo.START_RATING - short
+    assert long_ > short > 0
+
+
+def test_an_even_session_leaves_both_ratings_untouched(fake, client):
+    run(f"log <@{B}> 11-7 7-11 11-9 9-11", client)
+    press(bot.handle_confirm, posted_mid(client), B, client)
+    assert fake.rating(A) == fake.rating(B) == elo.START_RATING
+    assert fake.player(A)["games_won"] == 2 and fake.player(A)["games_lost"] == 2
+
+
+def test_the_board_counts_games_not_sessions(fake, client, monkeypatch):
+    monkeypatch.setattr(bot, "PLACEMENT_GAMES", 5)
+    run(f"log <@{B}> 11-7 11-9 11-8 11-6 11-5", client)   # one session, five games
+    press(bot.handle_confirm, posted_mid(client), B, client)
+    board = bot.board_text(store.all_players())
+    assert "Still placing" not in board      # five games qualifies them both
+    assert f"<@{A}>" in board
+
+
+def test_a_long_session_is_still_one_undoable_entry(fake, client):
+    run(f"log <@{B}> " + " ".join(["11-7"] * 8), client)
+    press(bot.handle_confirm, posted_mid(client), B, client)
+    assert "Undid" in said(run("undo", client))
+    assert fake.rating(A) == fake.rating(B) == elo.START_RATING
+    assert fake.player(A)["games_won"] == 0
