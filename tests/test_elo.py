@@ -219,20 +219,41 @@ def test_score_is_the_share_of_games_won():
     assert rate(P("a"), P("b"), CLOSE_WIN)["score_a"] == pytest.approx(2 / 3, abs=1e-3)
 
 
-# --- deuce -----------------------------------------------------------------
+# --- deuce and game length ------------------------------------------------
 
-def test_a_deuce_game_is_a_deuce_game_however_long_it_ran():
-    """Won by two is won by two. Only the margin is read, never the totals, so
-    a 31-29 marathon and an 11-9 count identically."""
-    assert elo.mov_multiplier(2) == elo.mov_multiplier(2)
-    for score in ([(11, 9)], [(15, 13)], [(21, 19)], [(31, 29)]):
-        assert gain(P("a"), P("b"), score) == gain(P("a"), P("b"), [(11, 9)])
+def test_every_deuce_game_lands_near_the_floor():
+    """Won by the minimum two, whatever the format and however long it ran."""
+    for hi, lo in ((11, 9), (13, 11), (18, 16), (21, 19), (25, 23), (31, 29)):
+        assert elo.mov_multiplier(hi - lo, hi) <= elo.mov_multiplier(2, elo.REFERENCE_GAME)
 
 
-def test_every_deuce_game_earns_the_smallest_multiplier():
-    assert elo.mov_multiplier(2) < elo.mov_multiplier(3)
-    assert all(elo.mov_multiplier(hi - lo) == elo.mov_multiplier(2)
-               for hi, lo in ((11, 9), (13, 11), (18, 16), (25, 23)))
+def test_the_same_margin_is_closer_in_a_longer_game():
+    """Two points is 18% of a game to 11 but under 10% of a game to 21, so
+    21-19 is the tighter result and has to count as one."""
+    assert elo.mov_multiplier(2, 21) < elo.mov_multiplier(2, 11)
+    assert elo.mov_multiplier(4, 21) < elo.mov_multiplier(4, 11)
+
+
+def test_proportionally_equal_games_score_alike():
+    """A game to 21 is rated on the same curve as a game to 11 once its margin
+    is read relative to the game being played — no second set of constants."""
+    for (a1, b1), (a2, b2) in (((11, 7), (21, 13)), ((11, 9), (21, 17)),
+                               ((11, 2), (21, 4))):
+        assert abs(elo.mov_multiplier(a1 - b1, a1)
+                   - elo.mov_multiplier(a2 - b2, a2)) < 0.06
+
+
+def test_the_eleven_point_calibration_is_untouched():
+    """Rescaling must not have quietly moved the numbers everything else was
+    tuned against."""
+    assert elo.mov_multiplier(elo.MOV_BASELINE, 11) == pytest.approx(1.0)
+    assert elo.mov_multiplier(4) == elo.mov_multiplier(4, 11)
+
+
+def test_a_freak_short_score_cannot_read_as_a_whitewash():
+    """Without a floor on the divisor, a 2-0 would rescale to an 11-0."""
+    assert elo.mov_multiplier(2, 2) < elo.MOV_MAX
+    assert elo.mov_multiplier(2, 2) == elo.mov_multiplier(2, elo.MIN_GAME)
 
 
 def test_a_session_of_deuce_battles_barely_moves_anyone():
@@ -241,10 +262,18 @@ def test_a_session_of_deuce_battles_barely_moves_anyone():
     assert 0 < deuces < routine
 
 
-def test_game_length_does_not_leak_into_the_maths():
-    """Points totals are recorded for the player card; the rating reads only the
-    per-game margin. A long game must not count as a bigger win."""
-    long_deuce = rate(P("a"), P("b"), [(21, 19)])
-    short_deuce = rate(P("a"), P("b"), [(11, 9)])
-    assert long_deuce["deltas"] == short_deuce["deltas"]
-    assert long_deuce["points_a"] != short_deuce["points_a"]   # still recorded
+def test_points_totals_are_recorded_but_do_not_drive_the_rating():
+    """The maths reads per-game margins; the totals are for the player card."""
+    r = rate(P("a"), P("b"), [(21, 19)])
+    assert r["points_a"] == 21 and r["points_b"] == 19
+    assert r["deltas"]["a"] > 0
+
+
+def test_twenty_one_point_games_are_rated_sensibly_end_to_end():
+    """The format actually being played: a 2-1 nets to about one clean win, and
+    a 3-0 to roughly three."""
+    two_one = gain(P("a"), P("b"), [(21, 19), (21, 14), (16, 21)])
+    three_nil = gain(P("a"), P("b"), [(21, 19), (21, 14), (21, 16)])
+    one_nil = gain(P("a"), P("b"), [(21, 17)])
+    assert 0 < two_one < three_nil
+    assert three_nil > 2 * one_nil

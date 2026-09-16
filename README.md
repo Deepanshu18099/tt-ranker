@@ -9,23 +9,28 @@ Singles and doubles, one ladder, no spreadsheet.
 ```
 you:       /tt log @bob 11-7 9-11 11-5
 
-tt-ranker: 🏓 @you  2–1  @bob
-           11-7   9-11   11-5
-           Logged by @you · @bob — confirm to lock in the rating change.
-           [ ✅ Confirm ]   [ ❌ That's wrong ]
+in #table-tennis                    in @bob's DM ─────────────────┐
+  🏓 @you  2–1  @bob                  🏓 @you  2–1  @bob          │
+  11-7   9-11   11-5                  11-7   9-11   11-5          │
+  Logged by @you · Sent to @bob       @you logged this. Is it     │
+  to confirm.                         right? Nothing moves until  │
+                                      you say so.                 │
+  (no buttons — the channel           [ ✅ Confirm ] [ ❌ Wrong ]  │
+   can read it, not rule on it)      ───────────────────────────── ┘
 
-…@bob presses Confirm
+…@bob presses Confirm, and both messages become:
 
-tt-ranker: 🏓 @you beat @bob — 2–1
-           11-7   9-11   11-5
+  🏓 @you beat @bob — 2–1
+  11-7   9-11   11-5
 
-           @you  1000 → 1010  +10
-           @bob  1000 →  990  -10
-           Match #17 · confirmed by @bob
+  @you  1000 → 1010  +10
+  @bob  1000 →  990  -10
+  Match #17 · confirmed by @bob
 ```
 
 Every game is rated on its own, so a ten-game session counts for more than a
-three-game one — [how the rating works](#how-your-rating-is-calculated).
+three-game one, and margins are read relative to the game — 21-19 is a squeaker,
+11-9 slightly less so. [How the rating works](#how-your-rating-is-calculated).
 
 ---
 
@@ -200,19 +205,21 @@ better did you do than expected*.
 
 ### 3 · How decisively you won it — the margin
 
-This is where the point scores earn their keep. Per game:
+This is where the point scores earn their keep. The margin is read **relative to
+the game being played**, so the same curve serves games to 11, games to 21 and
+first-to-7 without three sets of numbers:
 
-| You won by | Multiplier |
-|---|---|
-| 1 point | ×0.45 (floor) |
-| 2 points | ×0.56 |
-| 3 points | ×0.80 |
-| **4 points** | **×1.00** |
-| 5 points | ×1.17 |
-| 6 points | ×1.33 |
-| 8 points | ×1.60 |
-| 9 points | ×1.71 |
-| 11 points | ×1.75 (cap) |
+| Won by | in a game to 11 | in a game to 21 |
+|---|---|---|
+| the minimum 2 | ×0.56 | ×0.45 (floor) |
+| a close win | `11-8` ×0.80 | `21-16` ×0.71 |
+| **a par win** | `11-7` **×1.00** | `21-13` **×1.04** |
+| comfortable | `11-5` ×1.33 | `21-10` ×1.32 |
+| a whitewash | `11-2` ×1.71 | `21-4` ×1.70 |
+
+Two points is 18% of a game to 11 but under 10% of a game to 21, so `21-19` is
+the tighter result and counts as one. Read raw, every margin in a 21-point game
+would come out about twice as decisive as it really was.
 
 An 11-2 is worth roughly **three times** an 11-9. The curve is log-damped and
 clamped at both ends, because point margins are noisy — one 11-0 shouldn't

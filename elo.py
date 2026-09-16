@@ -44,8 +44,15 @@ PROVISIONAL_GAMES = 50
 # over many games a doubles record still says a lot about a player.
 DOUBLES_K_FACTOR = 0.75
 
-# mov == 1.0 at this point margin in a single game — a normal, clearly-won game.
+# The margin curve is calibrated on a game to 11: mov == 1.0 at a 4-point margin,
+# which is a normal, clearly-won 11-7.
 MOV_BASELINE = 4
+REFERENCE_GAME = 11
+# Longer games spread scores out — winning a game to 21 by 4 is close, while the
+# same 4 points in a game to 11 is comfortable. Margins are rescaled to their
+# game-to-11 equivalent before the curve sees them, so the same curve serves
+# 11s, 21s and first-to-7 without three sets of constants.
+MIN_GAME = 7  # floor on the divisor, so a freak 2-0 can't read as a whitewash
 # Above 1, the curve spreads out: a whitewash moves ~2.9x a deuce-fest instead of
 # ~2x. This is the knob for "how much should the scoreline matter".
 MOV_GAIN = 1.5
@@ -79,13 +86,21 @@ def k_factor(games_played, doubles=False):
     return k * DOUBLES_K_FACTOR if doubles else float(k)
 
 
-def mov_multiplier(margin):
+def mov_multiplier(margin, winner_points=None):
     """Scale one game's swing by how decisively it was won.
+
+    `winner_points` is the winning score, used to read the margin *relative to
+    the game being played*: 21-17 and 11-9 are both "won by about a fifth of the
+    game" and should count the same, even though one margin is 4 and the other 2.
+    Omit it and the margin is taken at face value, i.e. as a game to 11.
 
     log damps it and the clamp bounds it, so the multiplier stays in a range a
     player can reason about — roughly 0.5 for a deuce, 1.75 for a whitewash.
     """
-    raw = math.log(1.0 + abs(margin)) / math.log(1.0 + MOV_BASELINE)
+    m = abs(margin)
+    if winner_points:
+        m *= REFERENCE_GAME / float(max(abs(winner_points), MIN_GAME))
+    raw = math.log(1.0 + m) / math.log(1.0 + MOV_BASELINE)
     return min(MOV_MAX, max(MOV_MIN, raw ** MOV_GAIN))
 
 
@@ -140,7 +155,7 @@ def session_weight(rating_a, rating_b, games):
             continue  # a dead-even game decided nothing
         won_a = a > b
         gap = (rating_a - rating_b) if won_a else (rating_b - rating_a)
-        weight = mov_multiplier(a - b) * upset_correction(gap)
+        weight = mov_multiplier(a - b, max(a, b)) * upset_correction(gap)
         total += weight * ((1.0 if won_a else 0.0) - exp_a)
     return total
 
@@ -184,8 +199,8 @@ def rate_match(side_a, side_b, games):
         "expected_a": round(exp_a, 4),
         "weight_a": round(weight_a, 4),
         # Mean margin multiplier across the session — informational only.
-        "mov": round(sum(mov_multiplier(a - b) for a, b in games) / len(games), 4)
-        if games else 1.0,
+        "mov": round(sum(mov_multiplier(a - b, max(a, b)) for a, b in games)
+                     / len(games), 4) if games else 1.0,
         "deltas": deltas, "before": before, "after": after,
     }
 
