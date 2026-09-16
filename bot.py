@@ -651,7 +651,8 @@ Or type the whole thing:
 ```
 /tt log @opponent 11-7 9-11 11-5
 ```
-That's the points in each game, one per game. \
+That's the points in each game, one per game. Games to 11 or 21 both work, and \
+a skunk is just `11-0`. \
 Doubles: `/tt log @partner vs @dan @eve 11-7 11-9`
 
 *3 · The other side confirms*

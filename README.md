@@ -94,8 +94,14 @@ validation and end at the same confirmation prompt.
 
 Scores are **the points in each game**, one per game: `11-7 9-11 11-5` is three
 games won 2–1. There's no fixed session length — log two games or twenty, up to
-25. Games to 21 work fine. `11 - 7`, `11:7` and `11–7` are all read the same
-way. The word `log` is optional once you know the bot — `/tt @bob 11-7` works.
+25. Games to 11, to 21 and first-to-7 all work, and you can mix them in one
+session. `11 - 7`, `11:7` and `11–7` are all read the same way. The word `log`
+is optional once you know the bot — `/tt @bob 11-7` works.
+
+**Skunked?** If your house rule ends a game at 11-0, log it as `11-0`. It scores
+as the most decisive result there is — a single skunk is worth about double a
+normal win, because its winning score marks it as a *finished* game-to-11
+whitewash rather than a half-played game to 21.
 
 ### Confirming
 

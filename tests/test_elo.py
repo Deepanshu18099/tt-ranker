@@ -277,3 +277,33 @@ def test_twenty_one_point_games_are_rated_sensibly_end_to_end():
     one_nil = gain(P("a"), P("b"), [(21, 17)])
     assert 0 < two_one < three_nil
     assert three_nil > 2 * one_nil
+
+
+# --- the skunk rule (11-0 ends the game) ----------------------------------
+
+def test_a_skunk_is_the_most_decisive_result_there_is():
+    """House rule: reach 11-0 and the game is over. Its winning score is 11, so
+    it reads as a complete game-to-11 whitewash rather than a half-played game
+    to 21 — which is what it is."""
+    assert elo.mov_multiplier(11, 11) == elo.MOV_MAX
+    assert elo.mov_multiplier(11, 11) >= elo.mov_multiplier(19, 21)   # vs 21-2
+
+
+def test_a_skunk_beats_a_normal_win_by_about_double():
+    assert gain(P("a"), P("b"), [(11, 0)]) > gain(P("a"), P("b"), [(21, 13)]) > 0
+
+
+def test_a_skunk_mixes_into_a_longer_session(fake=None):
+    """One game ending early doesn't disturb the others in the same session."""
+    with_skunk = gain(P("a"), P("b"), [(21, 14), (11, 0), (21, 16)])
+    without = gain(P("a"), P("b"), [(21, 14), (21, 13), (21, 16)])
+    assert with_skunk > without > 0
+
+
+def test_losing_a_skunk_costs_the_most():
+    assert gain(P("a"), P("b"), [(0, 11)]) < gain(P("a"), P("b"), [(13, 21)]) < 0
+
+
+def test_a_skunk_still_conserves_the_pool():
+    r = rate(P("a", 1200), P("b", 900), [(11, 0)])
+    assert sum(r["deltas"].values()) == 0

@@ -164,3 +164,10 @@ def test_win_by_two_is_not_enforced():
     anything that isn't win-by-two would throw out legitimate casual scores."""
     assert parse(f"{m(BOB)} 11-10")["games"] == [(11, 10)]
     assert parse(f"{m(BOB)} 7-5")["games"] == [(7, 5)]
+
+
+def test_a_skunk_score_is_accepted():
+    """11-0 ends the game under the house rule, so it's a real final score."""
+    assert parse(f"{m(BOB)} 11-0")["games"] == [(11, 0)]
+    assert parse(f"{m(BOB)} 21-14 11-0 21-16")["games"] == [(21, 14), (11, 0), (21, 16)]
+    assert parse(f"{m(BOB)} 0-11")["games"] == [(0, 11)]
