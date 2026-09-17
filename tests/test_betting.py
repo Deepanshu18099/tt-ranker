@@ -70,21 +70,44 @@ def test_a_ledger_outage_never_costs_anyone_spins(fake, monkeypatch):
 
 # --- the stipend -----------------------------------------------------------
 
-def test_payday_tops_everyone_up(fake):
+@pytest.fixture
+def stipend_on(monkeypatch):
+    """The stipend is off by default; these cover it being switched back on."""
+    monkeypatch.setattr(betting, "WEEKLY_STIPEND", 1000)
+    return 1000
+
+
+def test_no_stipend_is_paid_while_it_is_switched_off(fake):
+    store.ensure_players([A])
+    betting.ensure_wallets([A])
+    assert betting.pay_stipend(week="tt:wk:2026-W38")["status"] == "disabled"
+    assert betting.balance(A) == betting.START_SPINS
+
+
+def test_switching_it_off_does_not_consume_the_week(fake, monkeypatch):
+    """Turning it back on should pay the week it is turned on in, not skip it
+    because a disabled run had already marked that week done."""
+    store.ensure_players([A])
+    betting.pay_stipend(week="tt:wk:2026-W38")
+    monkeypatch.setattr(betting, "WEEKLY_STIPEND", 1000)
+    assert betting.pay_stipend(week="tt:wk:2026-W38")["status"] == "paid"
+
+
+def test_payday_tops_everyone_up(fake, stipend_on):
     store.ensure_players([A, B])
     result = betting.pay_stipend(week="tt:wk:2026-W38")
     assert result["status"] == "paid" and result["players"] == 2
     assert betting.balance(A) == betting.START_SPINS + betting.WEEKLY_STIPEND
 
 
-def test_payday_happens_once_a_week(fake):
+def test_payday_happens_once_a_week(fake, stipend_on):
     store.ensure_players([A])
     betting.pay_stipend(week="tt:wk:2026-W38")
     assert betting.pay_stipend(week="tt:wk:2026-W38")["status"] == "already_paid"
     assert betting.balance(A) == betting.START_SPINS + betting.WEEKLY_STIPEND
 
 
-def test_nobody_starts_a_week_broke(fake):
+def test_nobody_starts_a_week_broke(fake, stipend_on):
     """Losing everything costs you a week, not the game. A wallet can't go
     negative, so the stipend alone is the floor — no separate rescue needed."""
     store.ensure_players([A])
@@ -96,7 +119,7 @@ def test_nobody_starts_a_week_broke(fake):
     assert betting.WEEKLY_STIPEND >= betting.MIN_BET * 2   # enough to play again
 
 
-def test_a_week_with_no_players_stays_claimable(fake):
+def test_a_week_with_no_players_stays_claimable(fake, stipend_on):
     assert betting.pay_stipend(week="tt:wk:2026-W38")["status"] == "no_players"
     store.ensure_players([A])
     assert betting.pay_stipend(week="tt:wk:2026-W38")["status"] == "paid"
@@ -361,7 +384,7 @@ def test_several_fixtures_settling_in_any_order_conserve_the_supply(fake):
     assert supply() == opening
 
 
-def test_the_stipend_is_the_only_thing_that_mints(fake):
+def test_the_stipend_is_the_only_thing_that_mints(fake, stipend_on):
     """Every other path is zero-sum; new spins come from exactly one place."""
     store.ensure_players(EVERYONE)
     betting.ensure_wallets(EVERYONE)

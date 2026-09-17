@@ -138,11 +138,12 @@ def test_diagnostics_never_break_the_run_they_measure(fake, monkeypatch):
 
 # --- payday ----------------------------------------------------------------
 
-def test_a_quiet_week_still_pays_the_stipend(fake):
+def test_a_quiet_week_still_pays_the_stipend(fake, monkeypatch):
     """The bug this file gained a section for: payday used to sit after the
     weekly post's early returns, so a week with no matches paid nobody — the
     exact week people need spins to start playing again."""
     import betting
+    monkeypatch.setattr(betting, "WEEKLY_STIPEND", 1000)
     store.ensure_players([A, B])
     now = at(2026, 9, 14)
     assert standings.post_weekly(MagicMock(), now=now)["status"] == "no_activity"
@@ -150,17 +151,19 @@ def test_a_quiet_week_still_pays_the_stipend(fake):
     assert betting.balance(A) == betting.START_SPINS + betting.WEEKLY_STIPEND
 
 
-def test_payday_does_not_need_a_channel(fake):
+def test_payday_does_not_need_a_channel(fake, monkeypatch):
     import betting
+    monkeypatch.setattr(betting, "WEEKLY_STIPEND", 1000)
     store.ensure_players([A])
     standings.CHANNEL = ""
     assert standings.pay_due_stipend()["status"] == "paid"
     assert betting.balance(A) == betting.START_SPINS + betting.WEEKLY_STIPEND
 
 
-def test_whichever_cron_fires_first_pays_and_the_rest_are_no_ops(fake):
+def test_whichever_cron_fires_first_pays_and_the_rest_are_no_ops(fake, monkeypatch):
     """Vercel has skipped scheduled invocations before, so both jobs try."""
     import betting
+    monkeypatch.setattr(betting, "WEEKLY_STIPEND", 1000)
     store.ensure_players([A])
     now = at(2026, 9, 14)
     assert standings.pay_due_stipend(now=now)["status"] == "paid"
@@ -168,8 +171,9 @@ def test_whichever_cron_fires_first_pays_and_the_rest_are_no_ops(fake):
     assert betting.balance(A) == betting.START_SPINS + betting.WEEKLY_STIPEND
 
 
-def test_a_dry_run_says_what_it_would_do_without_paying(fake):
+def test_a_dry_run_says_what_it_would_do_without_paying(fake, monkeypatch):
     import betting
+    monkeypatch.setattr(betting, "WEEKLY_STIPEND", 1000)
     store.ensure_players([A])
     assert standings.pay_due_stipend(dry_run=True)["status"] == "would_pay"
     assert betting.balance(A) == betting.START_SPINS
@@ -177,8 +181,9 @@ def test_a_dry_run_says_what_it_would_do_without_paying(fake):
     assert standings.pay_due_stipend(dry_run=True)["status"] == "already_paid"
 
 
-def test_each_week_is_paid_once(fake):
+def test_each_week_is_paid_once(fake, monkeypatch):
     import betting
+    monkeypatch.setattr(betting, "WEEKLY_STIPEND", 1000)
     store.ensure_players([A])
     standings.pay_due_stipend(now=at(2026, 9, 14))
     standings.pay_due_stipend(now=at(2026, 9, 21))     # the next week

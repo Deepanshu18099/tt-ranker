@@ -33,10 +33,14 @@ import store
 
 CURRENCY = "spins"
 START_SPINS = 5000
-# Nobody starts a week broke: a wallet can never go negative, so the stipend on
-# its own guarantees at least this much every Monday. No separate floor is
-# needed, and one that could never fire would be dead code in the money path.
-WEEKLY_STIPEND = 1000
+# Off. Set it above zero to hand every player that many spins at the start of
+# each week; the cron jobs already call the payer, and it claims each week once.
+#
+# With it off, the only spins in the system are the ones people opened with, so
+# the pool is finite and losing actually costs something. That also means a
+# player who busts out stays busted until an admin moves some across with
+# `/tt transfer`, which is a deliberate trade rather than an oversight.
+WEEKLY_STIPEND = 0
 MIN_BET = 5
 
 WALLET_KEY = "tt:wallet"
@@ -151,6 +155,10 @@ def pay_stipend(week=None, now=None):
     """Top every wallet up once a week. Idempotent per week — the claim is the
     SADD, so a cron retry can't pay twice."""
     week = week or store.week_key(now)
+    if WEEKLY_STIPEND <= 0:
+        # Claim nothing: turning it back on later should pay the week it is
+        # turned on in, not skip it because a disabled run marked it done.
+        return {"status": "disabled", "week": week}
     if kv.sadd(STIPEND_KEY, week) != 1:
         return {"status": "already_paid", "week": week}
     players = list(store.all_players())

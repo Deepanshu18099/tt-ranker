@@ -126,6 +126,8 @@ def pay_due_stipend(now=None, dry_run=False):
     """
     import betting
     week = store.week_key(now)
+    if betting.WEEKLY_STIPEND <= 0:
+        return {"status": "disabled", "week": week}
     if dry_run:
         paid = week in set(kv.smembers(betting.STIPEND_KEY) or [])
         return {"status": "already_paid" if paid else "would_pay", "week": week}

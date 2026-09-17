@@ -1971,8 +1971,10 @@ def handle_wallet(command, respond):
             lines.append(f"`{sign}{entry['delta']:>5}`  {entry['reason']}  "
                          f"_{fmt_ago(entry['at'])}_")
     else:
-        lines.append(f"_Everyone starts with {fmt_spins(betting.START_SPINS)}, "
-                     f"plus {fmt_spins(betting.WEEKLY_STIPEND)} every Monday._")
+        stipend = (f", plus {fmt_spins(betting.WEEKLY_STIPEND)} a week"
+                   if betting.WEEKLY_STIPEND > 0 else "")
+        lines.append(f"_Everyone starts with {fmt_spins(betting.START_SPINS)}"
+                     f"{stipend}._")
     lines.append("\n_`/tt book` for what's open to bet on._")
     respond("\n".join(lines))
 

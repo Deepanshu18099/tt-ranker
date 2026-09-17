@@ -732,14 +732,20 @@ rather than silently meaning it.
 | | |
 |---|---|
 | Everyone starts with | **5,000** |
-| Every Monday | **+1,000**, with the standings post |
+| Top-ups | **none** — `WEEKLY_STIPEND = 0` |
 | Smallest stake | **5** |
 
 A wallet can never go negative — stakes leave when the bet is placed and
-settlement only ever credits — so the Monday stipend alone guarantees you can
-always play again. Losing everything costs you a week, not the game. **The
-stipend is the only thing in the system that mints spins**; every other path is
-zero-sum, and there's a test that says so.
+settlement only ever credits.
+
+**Nothing mints spins.** The supply is fixed at what everyone opened with, so a
+spin won is a spin somebody else lost and the currency is worth something.
+Betting and transfers are both zero-sum, and there's a test that says so.
+
+The trade is that busting out is permanent until an admin moves some across with
+`/tt transfer`. A weekly stipend is one constant away if that turns out to be
+too harsh — set `WEEKLY_STIPEND` above zero in [betting.py](betting.py) and both
+cron jobs start paying it, claimed once a week so it can't be paid twice.
 
 ### Moving spins
 
