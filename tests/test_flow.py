@@ -139,7 +139,7 @@ def test_a_bad_command_explains_itself_privately(fake, client):
 
 
 def test_a_channel_it_cannot_post_in_leaves_no_orphan(fake, client):
-    client.chat_postMessage.side_effect = Exception("not_in_channel")
+    client.chat_postMessage.side_effect = SlackRefusal("not_in_channel")
     respond = run(f"log <@{B}> 11-7", client)
     assert "invite me" in said(respond)
     assert store.list_pending() == []
@@ -1601,3 +1601,53 @@ def test_a_schedule_shortcut_that_cannot_open_is_explained_by_dm(fake, client):
     bot.handle_schedule_shortcut(ack, {"user": {"id": A}, "trigger_id": "t"}, client=client)
     assert dm_to(client, A) is not None
     assert "/tt schedule @opponent" in dm_text(client, A)
+
+
+# --- saying what actually went wrong --------------------------------------
+
+class SlackRefusal(Exception):
+    """A slack_sdk error, which carries the reason in .response['error']."""
+    def __init__(self, code):
+        self.response = {"error": code}
+        super().__init__(code)
+
+
+def test_a_private_channel_is_explained_as_one(fake, client):
+    """channel_not_found is what Slack says for a private channel the bot isn't
+    in, which is the single most confusing refusal here — chat:write.public
+    covers public channels only."""
+    client.chat_postMessage.side_effect = SlackRefusal("channel_not_found")
+    respond = run(f"schedule <@{B}> in 2h", client)
+    said_it = said(respond)
+    assert "private channel" in said_it and "/invite" in said_it
+    assert betting.live() == []          # nothing left standing with no message
+
+
+def test_being_outside_the_channel_says_so(fake, client):
+    client.chat_postMessage.side_effect = SlackRefusal("not_in_channel")
+    assert "I'm not in" in said(run(f"schedule <@{B}> in 2h", client))
+
+
+def test_an_unknown_refusal_is_quoted_rather_than_guessed_at(fake, client):
+    """It used to blame the channel for every failure — a guess dressed as a
+    diagnosis, and useless when the cause was something else."""
+    client.chat_postMessage.side_effect = SlackRefusal("ratelimited")
+    assert "`ratelimited`" in said(run(f"schedule <@{B}> in 2h", client))
+
+
+def test_a_failure_with_no_slack_code_still_says_something(fake, client):
+    client.chat_postMessage.side_effect = RuntimeError("connection reset")
+    assert "connection reset" in said(run(f"schedule <@{B}> in 2h", client))
+
+
+def test_a_failed_fixture_stakes_nothing(fake, client):
+    client.chat_postMessage.side_effect = SlackRefusal("not_in_channel")
+    respond = run(f"schedule <@{B}> in 2h", client)
+    assert "Nothing was staked" in said(respond)
+    assert betting.balance(A) == betting.START_SPINS
+
+
+def test_logging_reports_the_real_reason_too(fake, client):
+    client.chat_postMessage.side_effect = SlackRefusal("is_archived")
+    assert "archived" in said(run(f"log <@{B}> 11-7", client))
+    assert store.list_pending() == []

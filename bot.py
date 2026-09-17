@@ -272,6 +272,43 @@ def may_dispute(record, uid):
 
 # --- /tt log ---------------------------------------------------------------
 
+def post_failure(e, channel="", bot_id=None):
+    """Say what Slack actually refused, not what we assume it refused.
+
+    This used to report "invite me there" for every exception, which is a guess
+    dressed as a diagnosis — and useless when the real cause is a private
+    channel, an archived one, or a malformed message. Slack names the reason;
+    pass it on.
+    """
+    code = ""
+    response = getattr(e, "response", None)
+    if response is not None:
+        try:
+            code = response.get("error") or ""
+        except Exception:
+            code = ""
+    where = f"<#{channel}>" if str(channel).startswith("C") else "that channel"
+    invite = f" with `/invite <@{bot_id}>`" if bot_id else ""
+    known = {
+        "not_in_channel": f"I'm not in {where} — invite me there{invite}.",
+        # Slack says "not found" rather than "forbidden" for a private channel
+        # the bot isn't in, which is the single most confusing case here:
+        # chat:write.public covers public channels only.
+        "channel_not_found": (f"I can't see {where}. If it's a private channel I "
+                              f"have to be invited{invite} — posting without an "
+                              "invite only works in public ones."),
+        "is_archived": f"{where} is archived.",
+        "restricted_action": f"This workspace doesn't allow me to post in {where}.",
+        "msg_too_long": "That message came out too long for Slack.",
+        "invalid_blocks": "I built a message Slack rejected — that's my bug, not yours.",
+    }
+    if code in known:
+        return f":warning: {known[code]}"
+    if code:
+        return f":warning: Slack wouldn't let me post in {where} — it said `{code}`."
+    return f":warning: I couldn't post in {where}: {e}."
+
+
 def submit_match(side_a, side_b, games, logged_by, channel, client, bot_id=None, logger=None):
     """Park a match and post its confirmation prompt. Returns None on success, or
     a message to relay to whoever logged it.
@@ -293,8 +330,7 @@ def submit_match(side_a, side_b, games, logged_by, channel, client, bot_id=None,
         # nobody can see, let alone settle.
         store.drop_pending(record["id"])
         (logger or log).warning("could not post pending session: %s", e)
-        invite = f" with `/invite <@{bot_id}>`" if bot_id else ""
-        return f":warning: I couldn't post in that channel — invite me there{invite} and log it again."
+        return post_failure(e, channel, bot_id) + " Then log it again."
 
     dms = _send_verdict_dms(record, client, logger=logger)
     store.attach_messages(record["id"], resp["channel"], resp["ts"], dms)
@@ -476,7 +512,7 @@ def _modal_value(state, block, key="value"):
     return inner.get(key)
 
 
-def handle_log_modal(ack, body, view, client=None, logger=None):
+def handle_log_modal(ack, body, view, client=None, context=None, logger=None):
     """Validate the form in place, then hand off to the same path as the typed
     command. Errors come back attached to their field rather than as a message
     after the modal has closed, so a typo is one correction, not a retype."""
@@ -509,8 +545,8 @@ def handle_log_modal(ack, body, view, client=None, logger=None):
         return
 
     ack()  # close the form
-    error = submit_match(side_a, side_b, games, caller, channel or caller,
-                         client, logger=logger)
+    error = submit_match(side_a, side_b, games, caller, channel or caller, client,
+                         bot_id=(context or {}).get("bot_user_id"), logger=logger)
     if error:
         # The modal is gone by now, so there is nothing to attach this to.
         _dm(client, caller, error, logger=logger)
@@ -1404,7 +1440,8 @@ SCHEDULE_MODAL = "tt_schedule_modal"
 SCHEDULE_SHORTCUT = "tt_schedule_shortcut"
 
 
-def open_fixture(side_a, side_b, when, caller, channel, client, now=None, logger=None):
+def open_fixture(side_a, side_b, when, caller, channel, client, now=None,
+                 logger=None, bot_id=None):
     """Create a fixture and post it. Returns None, or a message for the caller.
 
     Shared by the typed command, the form and the shortcut, so none of them can
@@ -1421,9 +1458,8 @@ def open_fixture(side_a, side_b, when, caller, channel, client, now=None, logger
         # No message means nobody can bet on it, so don't leave one standing.
         betting.claim(record["id"])
         betting.void(record, "could not be posted", now)
-        (logger or log).warning("could not post fixture: %s", e)
-        return (":warning: I couldn't post in that channel — invite me there "
-                "and try again.")
+        (logger or log).warning("could not post fixture in %s: %s", channel, e)
+        return post_failure(e, channel, bot_id) + " Nothing was staked."
     record["ts"], record["channel"] = resp["ts"], resp["channel"]
     betting.save(record)
     return None
@@ -1495,7 +1531,7 @@ def handle_schedule(command, respond, client, bot_id=None, logger=None):
         respond(f":warning: {e}")
         return
     error = open_fixture(side_a, side_b, when, caller, command["channel_id"],
-                         client, now, logger)
+                         client, now, logger, bot_id=bot_id)
     if error:
         respond(error)
 
@@ -1513,7 +1549,7 @@ def handle_schedule_shortcut(ack, shortcut, client=None, logger=None):
                           "with `/tt schedule @opponent 6pm` instead.", logger=logger)
 
 
-def handle_schedule_modal(ack, body, view, client=None, logger=None):
+def handle_schedule_modal(ack, body, view, client=None, context=None, logger=None):
     """Validate in place, then hand off to the same path as the typed command."""
     state = view["state"]["values"]
     side_a = _modal_value(state, "side_a", "selected_users") or []
@@ -1546,7 +1582,7 @@ def handle_schedule_modal(ack, body, view, client=None, logger=None):
     ack()
     caller = body["user"]["id"]
     error = open_fixture(side_a, side_b, when, caller, channel or caller,
-                         client, now, logger)
+                         client, now, logger, bot_id=(context or {}).get("bot_user_id"))
     if error:
         _dm(client, caller, error, logger=logger)
 
