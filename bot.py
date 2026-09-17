@@ -13,6 +13,7 @@ A logged match does not move anybody's rating on its own — it waits for someon
 on the other side to press Confirm (or for the daily sweep to age it in). See
 store.py for why the rating maths happens at confirmation time rather than here.
 """
+import json
 import logging
 import os
 import ssl
@@ -34,6 +35,7 @@ import betting
 import elo
 import kv
 import parsing
+import rerate
 import store
 
 CONFIRM_ACTION = "tt_confirm"
@@ -1371,6 +1373,127 @@ def handle_undo(command, respond):
             f"{fmt_side(blob['side_b'])}).\n{restored}")
 
 
+# --- correcting a match that was logged wrong ------------------------------
+
+EDIT_ACTION = "tt_edit_apply"
+EDIT_MOVED_SHOWN = 12
+
+
+def _edit_summary(plan):
+    """The before/after of the match itself, as the admin will read it."""
+    was = plan["before"]
+    lines = [f"*Was*  {fmt_side(was['side_a'])} vs {fmt_side(was['side_b'])}"
+             f"\n{fmt_games(was['games'])}"]
+    if plan["void"]:
+        lines.append("*Now*  _voided — the match is removed from the ladder._")
+    else:
+        now = plan["after"]
+        lines.append(f"*Now*  {fmt_side(now['side_a'])} vs {fmt_side(now['side_b'])}"
+                     f"\n{fmt_games(now['games'])}")
+    return "\n".join(lines)
+
+
+def _edit_effect(plan):
+    """Who moves, and the warnings that go with it."""
+    lines = []
+    if plan["replayed"]:
+        lines.append(f"_Re-rates the {plan['replayed']} match"
+                     f"{'es' if plan['replayed'] != 1 else ''} logged after it — "
+                     "those were rated against ratings this one produced._")
+    moved = sorted(plan["moved"].items(), key=lambda i: -abs(i[1][1] - i[1][0]))
+    if not moved:
+        lines.append("_No rating changes._")
+    for uid, (was, now) in moved[:EDIT_MOVED_SHOWN]:
+        lines.append(f"<@{uid}>  {was} → *{now}*  `{fmt_delta(now - was)}`")
+    if len(moved) > EDIT_MOVED_SHOWN:
+        lines.append(f"_…and {len(moved) - EDIT_MOVED_SHOWN} more._")
+    if plan["winner_flipped"]:
+        lines.append(":warning: *This flips who won.* Any bets on it were already "
+                     "paid out on the old result — spins are not touched by a "
+                     "correction, so settle those by hand if it matters.")
+    return "\n".join(lines)
+
+
+def handle_edit(command, respond, bot_id=None):
+    """`/tt edit #33 21-19 …` · `swap` · `void` — admin only.
+
+    A correction to an old match re-rates every match after it, because those
+    were rated against the ratings it produced. So it never writes on the first
+    press: it shows exactly what would change and waits to be told yes.
+    """
+    caller = command["user_id"]
+    if not is_admin(caller):
+        respond(":lock: Only an admin can edit a logged match. Ask one of them, "
+                "or `/tt undo` if it's the last one you logged yourself.")
+        return
+
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    try:
+        mid, games, swap, void = parsing.parse_edit(rest, bot_id=bot_id)
+    except parsing.ParseError as e:
+        respond(f":warning: {e}")
+        return
+
+    try:
+        plan, state, rewritten, weekly = rerate.plan_edit(
+            mid, games=None if void else games, swap=swap)
+    except rerate.EditError as e:
+        respond(f":warning: {e}")
+        return
+
+    respond(blocks=[
+        {"type": "section", "text": {"type": "mrkdwn",
+         "text": f":pencil2: *Edit match `#{plan['id']}`*\n\n{_edit_summary(plan)}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": _edit_effect(plan)}},
+        {"type": "actions", "elements": [
+            {"type": "button", "action_id": EDIT_ACTION,
+             "style": "danger" if plan["void"] else "primary",
+             "text": {"type": "plain_text", "text": "Apply the correction"},
+             "value": json.dumps({"id": plan["id"], "swap": swap, "void": void,
+                                  "games": None if void else games})},
+        ]},
+        {"type": "context", "elements": [{"type": "mrkdwn",
+         "text": "Nothing has changed yet. The channel is told what was corrected."}]},
+    ], text=f"Edit match #{plan['id']}")
+
+
+def handle_edit_apply(body, client, respond, logger=None):
+    """The button. Re-plans from scratch rather than trusting the preview: the
+    ladder may have moved on since it was drawn, and the numbers that get written
+    have to be the numbers computed against what is actually stored now."""
+    user = body["user"]["id"]
+    if not is_admin(user):
+        _only_you(respond, ":lock: Only an admin can apply a correction.")
+        return
+    try:
+        spec = json.loads(_action_value(body))
+    except (TypeError, ValueError):
+        _only_you(respond, ":x: I've lost track of that edit — run `/tt edit` again.")
+        return
+
+    try:
+        plan, state, rewritten, weekly = rerate.plan_edit(
+            spec["id"], games=None if spec["void"] else
+            [tuple(g) for g in (spec["games"] or [])] or None,
+            swap=spec["swap"])
+    except rerate.EditError as e:
+        _only_you(respond, f":warning: {e}")
+        return
+
+    rerate.commit_edit(plan, state, rewritten, weekly)
+    respond(replace_original=True,
+            text=f":white_check_mark: Match `#{plan['id']}` corrected.")
+
+    note = (f":pencil2: <@{user}> corrected match `#{plan['id']}`.\n\n"
+            f"{_edit_summary(plan)}\n\n{_edit_effect(plan)}")
+    channel = HOME_CHANNEL
+    if channel:
+        try:
+            client.chat_postMessage(channel=channel, text=note)
+        except Exception as e:
+            (logger or log).warning("could not announce edit: %s", e)
+
+
 def handle_odds(command, respond, bot_id=None):
     _, rest = parsing.split_subcommand(command.get("text", ""))
     try:
@@ -1411,6 +1534,8 @@ results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 • `/tt name Your Name` — how you appear on the web ladder
 • `/tt who ChumChum` — who is that? · `/tt who @someone` — what are they called?\n• `/tt intro` — post the how-it-works message, for pinning
 • `/tt wallet` — your spins    • `/tt rich` — the spins leaderboard
+• `/tt edit 33 21-19 …` — correct a logged match _(admins; `swap` if the sides \
+went in backwards, `void` to throw it out)_
 
 *How the rating works*
 Everyone starts at *{elo.START_RATING}*. *Every game is rated on its own and \
@@ -1489,6 +1614,8 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_pending(command, respond)
         elif sub == "undo":
             handle_undo(command, respond)
+        elif sub == "edit":
+            handle_edit(command, respond, bot_id)
         elif sub == "odds":
             handle_odds(command, respond, bot_id)
         elif sub == "sync":
@@ -1542,6 +1669,7 @@ def build_app(process_before_response=False, token_verification=True):
     app.command("/tt")(handle_tt_command)
     app.action(CONFIRM_ACTION)(_wrap_action(handle_confirm))
     app.action(DISPUTE_ACTION)(_wrap_action(handle_dispute))
+    app.action(EDIT_ACTION)(_wrap_action(handle_edit_apply))
     app.view(LOG_MODAL)(handle_log_modal)
     app.shortcut(LOG_SHORTCUT)(handle_log_shortcut)
     app.shortcut(SCHEDULE_SHORTCUT)(handle_schedule_shortcut)

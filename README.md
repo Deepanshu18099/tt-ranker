@@ -45,6 +45,7 @@ Everything is one slash command, `/tt`.
 | `/tt log @partner vs @dan @eve 11-7 11-9` | Doubles. `vs` splits the sides |
 | `/tt log @ann @bob vs @cal @dee 11-7 11-9` | Record a session you weren't in |
 | `/tt board` · `/tt board singles` · `/tt board doubles` | The ladder · one format only |
+| `/tt edit 33 21-17 21-19` | Correct a logged match — admins (`swap`, `void`) |
 | `/tt me` · `/tt me @bob` | One player's card — rating, record, streak, peak |
 | `/tt history` · `/tt history @bob` | Recent results |
 | `/tt pending` | Sessions still waiting on confirmation |
@@ -155,6 +156,41 @@ moment they log them, and can confirm or throw out anybody else's pending
 session — the only way to clear one whose players have gone quiet, short of
 waiting for the daily sweep. The result still says *recorded by @them* 🛡, so
 skipping the confirmation is visible to the channel rather than silent.
+
+### Correcting a match that was logged wrong
+
+`/tt undo` only reaches the last match *you* logged. For anything older, or
+anybody else's, an admin has `/tt edit`:
+
+```
+/tt edit 33 21-17 11-0 21-13 21-14 21-19   # the scores were wrong
+/tt edit 33 swap                            # the names went in backwards
+/tt edit 33 void                            # throw the match out entirely
+```
+
+`swap` moves only the names — the scores stay in the columns they were typed
+in, which is what flips the result. Turning the score columns round as well
+would invert it twice and leave the match exactly as it was.
+
+**Editing an old match re-rates every match logged after it.** Those were rated
+against the ratings this one produced, so patching one record and leaving the
+rest would give a ladder that no sequence of matches could have produced. The
+edit replays the whole history instead — the same replay `scripts/recompute.py`
+uses, shared in [rerate.py](rerate.py) so the two can't disagree. Afterwards the
+ladder is exactly the ladder you'd have had if the right thing had been logged
+the first time, which is the property the tests actually assert: they edit a
+match, then compare against a ladder that only ever saw the corrected version.
+
+Nothing is written on the first press. `/tt edit` shows what would change —
+before, after, who moves and by how much, how many matches get re-rated — and
+waits for the button. Applying it **posts to the channel**: a retroactive change
+to other people's ratings shouldn't be something only the admin knows about.
+
+Two things it deliberately won't do. It refuses outright if any match is missing
+from storage, because a replay on an incomplete history would invent a ladder
+rather than rebuild one. And it doesn't touch **spins**: bets were paid on what
+the channel was told at the time. If a correction flips who won, the preview
+says so in as many words and leaves settling up to a human.
 
 ### Three ladders
 

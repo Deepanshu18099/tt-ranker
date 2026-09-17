@@ -42,6 +42,7 @@ SUBCOMMANDS = {
     "standings": "board", "ladder": "board",
     "history": "history", "recent": "history", "log-history": "history",
     "undo": "undo", "oops": "undo",
+    "edit": "edit", "fix": "edit", "correct": "edit", "amend": "edit",
     "pending": "pending", "unconfirmed": "pending",
     "odds": "odds", "predict": "odds", "chance": "odds",
     "sync": "sync", "backfill": "sync",
@@ -403,3 +404,62 @@ def parse_schedule(text, caller=None, bot_id=None, now=None):
         raise ParseError(f"That's more than {MAX_LEAD_DAYS} days out — "
                          "schedule it nearer the time.")
     return side_a, side_b, when
+
+
+# --- correcting a logged match ---------------------------------------------
+
+VOID_WORDS = ("void", "delete", "remove", "scrap")
+SWAP_WORDS = ("swap", "flip", "invert", "reverse", "backwards")
+MATCH_ID_RE = re.compile(r"^#?(\d{1,9})$")
+
+
+def parse_edit(text, bot_id=None):
+    """`33 21-19 …` → (id, games, swap, void), for `/tt edit`.
+
+    The id comes first because a bare number would otherwise be indistinguishable
+    from half a score. `swap` and `void` are words rather than flags so that a
+    mistyped one fails loudly instead of being read as a score.
+    """
+    words = [w for w in text.replace("#", " #").split() if w]
+    if not words:
+        raise ParseError(
+            "Which match? `/tt edit 33 21-17 21-19` to fix the scores, "
+            "`/tt edit 33 swap` if the sides went in the wrong way round, "
+            "`/tt edit 33 void` to throw it out. The number is on the result "
+            "message — `Match #33`.")
+    head, rest = words[0], words[1:]
+    found = MATCH_ID_RE.match(head)
+    if not found:
+        raise ParseError(f"`{head}` isn't a match number. It's the `#33` on the "
+                         "result message, and it comes first.")
+    mid = found.group(1)
+
+    swap = void = False
+    scores = []
+    for word in rest:
+        low = word.lower()
+        if low in SWAP_WORDS:
+            swap = True
+        elif low in VOID_WORDS:
+            void = True
+        else:
+            scores.append(word)
+
+    if void and (swap or scores):
+        raise ParseError("`void` throws the whole match out, so it doesn't take "
+                         "scores or `swap` as well.")
+    games = None
+    if scores:
+        games = [v for kind, v in _tokenize(" ".join(scores)) if kind == "score"]
+        unread = [w for w in scores
+                  if not any(k == "score" for k, _ in _tokenize(w))]
+        if unread:
+            raise ParseError(
+                f"I couldn't read `{unread[0]}` as a game score. Give every game "
+                "of the corrected session, like `21-17 21-19`.")
+        validate_games(games)
+        games = normalise_games(games)
+    if not (games or swap or void):
+        raise ParseError("Nothing to change. Add the corrected scores, or "
+                         "`swap` to turn the sides around, or `void`.")
+    return mid, games, swap, void

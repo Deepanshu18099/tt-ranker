@@ -178,3 +178,49 @@ def test_the_bet_form_is_a_valid_view(fake):
     check_view(bot.bet_modal(record, "a", 500), "bet modal")
     betting.place_bet(record, C, "a", 50)
     check_view(bot.bet_modal(record, "b", 500), "bet modal[with a pool]")
+
+
+# --- the edit preview ------------------------------------------------------
+
+def _edit_blocks(fake, monkeypatch, text, players=(A, B), games=((21, 14), (21, 16))):
+    from unittest.mock import MagicMock
+    monkeypatch.setenv("TT_ADMINS", A)
+    record = store.create_pending([players[0]], [players[1]],
+                                  [list(g) for g in games], logged_by=players[0])
+    store.claim_pending(record["id"])
+    store.apply_match(record, confirmed_by=players[1])
+    respond = MagicMock()
+    bot.handle_edit({"user_id": A, "text": text, "channel_id": "C1"}, respond)
+    blocks = respond.call_args.kwargs.get("blocks")
+    assert blocks, f"no preview for {text!r}: {respond.call_args}"
+    return blocks
+
+
+@pytest.mark.parametrize("text", ["edit 1 21-14 21-19", "edit 1 swap", "edit 1 void"])
+def test_the_edit_preview_is_valid(fake, monkeypatch, text):
+    check_blocks(_edit_blocks(fake, monkeypatch, text), f"handle_edit({text})")
+
+
+def test_the_edit_button_value_fits_slacks_limit(fake, monkeypatch):
+    """The whole edit spec rides in the button's value, and a long session is
+    the case that would push it over."""
+    games = tuple((21, 10) for _ in range(25))          # elo.MAX_GAMES
+    text = "edit 1 " + " ".join(f"{a}-{b}" for a, b in games)
+    blocks = _edit_blocks(fake, monkeypatch, text, games=((21, 14),))
+    button = next(el for b in blocks if b["type"] == "actions"
+                  for el in b["elements"])
+    assert len(button["value"]) <= LIMITS["value"]
+
+
+def test_a_correction_that_moves_the_whole_ladder_still_fits_a_section():
+    """Editing an early match can move everybody. The preview truncates rather
+    than building a section Slack will reject."""
+    plan = {"id": "1", "void": False, "replayed": 300, "winner_flipped": True,
+            "moved": {f"U0PL{i:03d}": (1000, 1000 + i) for i in range(1, 300)},
+            "before": {"side_a": [A], "side_b": [B], "games": [(21, 14)]},
+            "after": {"side_a": [A], "side_b": [B], "games": [(21, 19)]}}
+    effect = bot._edit_effect(plan)
+    assert len(effect) <= LIMITS["section"]
+    assert "and 287 more" in effect          # 299 moved, 12 shown
+    check_blocks([{"type": "section", "text": {"type": "mrkdwn", "text": effect}}],
+                 "_edit_effect(wide)")
