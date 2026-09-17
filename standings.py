@@ -107,12 +107,29 @@ def post_weekly(client, now=None, channel=None, force=False, dry_run=False):
         kv.srem(POSTED_KEY, week_key)  # nothing happened; let a later run try
         return {"status": "no_activity", "week": week_key}
     resp = client.chat_postMessage(channel=target, text=text)
-    # Monday is also payday. Idempotent per week on its own claim, so a retry of
-    # the post can't hand out a second stipend.
-    import betting
-    stipend = betting.pay_stipend(now=now)
     return {"status": "posted", "week": week_key, "ts": resp["ts"],
-            "channel": resp["channel"], "stipend": stipend}
+            "channel": resp["channel"]}
+
+
+def pay_due_stipend(now=None, dry_run=False):
+    """Hand out the week's spins.
+
+    Deliberately not part of the weekly standings post, which is where this
+    lived and never ran: that function returns early when the week was quiet,
+    when TT_CHANNEL is unset and when the post already went out, so a week with
+    no matches paid nobody — which is precisely the week people need spins to
+    get playing again.
+
+    Called from every cron instead. The per-week claim inside pay_stipend makes
+    that safe: whichever scheduled job fires first that week pays, the rest are
+    no-ops, and nobody is left unpaid because one job was skipped.
+    """
+    import betting
+    week = store.week_key(now)
+    if dry_run:
+        paid = week in set(kv.smembers(betting.STIPEND_KEY) or [])
+        return {"status": "already_paid" if paid else "would_pay", "week": week}
+    return betting.pay_stipend(now=now)
 
 
 def sweep_pending(client, now=None, dry_run=False, logger=None):

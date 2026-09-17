@@ -134,3 +134,52 @@ def test_diagnostics_never_break_the_run_they_measure(fake, monkeypatch):
     monkeypatch.setattr(standings.kv, "hset_many",
                         MagicMock(side_effect=RuntimeError("kv down")))
     standings.record_invocation("vercel-cron/1.0")  # must not raise
+
+
+# --- payday ----------------------------------------------------------------
+
+def test_a_quiet_week_still_pays_the_stipend(fake):
+    """The bug this file gained a section for: payday used to sit after the
+    weekly post's early returns, so a week with no matches paid nobody — the
+    exact week people need spins to start playing again."""
+    import betting
+    store.ensure_players([A, B])
+    now = at(2026, 9, 14)
+    assert standings.post_weekly(MagicMock(), now=now)["status"] == "no_activity"
+    assert standings.pay_due_stipend(now=now)["status"] == "paid"
+    assert betting.balance(A) == betting.START_SPINS + betting.WEEKLY_STIPEND
+
+
+def test_payday_does_not_need_a_channel(fake):
+    import betting
+    store.ensure_players([A])
+    standings.CHANNEL = ""
+    assert standings.pay_due_stipend()["status"] == "paid"
+    assert betting.balance(A) == betting.START_SPINS + betting.WEEKLY_STIPEND
+
+
+def test_whichever_cron_fires_first_pays_and_the_rest_are_no_ops(fake):
+    """Vercel has skipped scheduled invocations before, so both jobs try."""
+    import betting
+    store.ensure_players([A])
+    now = at(2026, 9, 14)
+    assert standings.pay_due_stipend(now=now)["status"] == "paid"
+    assert standings.pay_due_stipend(now=now)["status"] == "already_paid"
+    assert betting.balance(A) == betting.START_SPINS + betting.WEEKLY_STIPEND
+
+
+def test_a_dry_run_says_what_it_would_do_without_paying(fake):
+    import betting
+    store.ensure_players([A])
+    assert standings.pay_due_stipend(dry_run=True)["status"] == "would_pay"
+    assert betting.balance(A) == betting.START_SPINS
+    standings.pay_due_stipend()
+    assert standings.pay_due_stipend(dry_run=True)["status"] == "already_paid"
+
+
+def test_each_week_is_paid_once(fake):
+    import betting
+    store.ensure_players([A])
+    standings.pay_due_stipend(now=at(2026, 9, 14))
+    standings.pay_due_stipend(now=at(2026, 9, 21))     # the next week
+    assert betting.balance(A) == betting.START_SPINS + 2 * betting.WEEKLY_STIPEND

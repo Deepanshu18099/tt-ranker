@@ -165,13 +165,19 @@ def route(subpath):
                 return "", 200
         return slack_request_handler.handle(request)
 
+    # Both cron jobs pay the stipend. It is claimed once per week, so whichever
+    # fires first that week hands it out and the other is a no-op — nobody goes
+    # unpaid because one scheduled job was skipped.
     if tail.endswith("/cron/standings"):
-        return _run_cron(lambda s, client, dry: s.post_weekly(client, dry_run=dry))
+        return _run_cron(lambda s, client, dry: {
+            **s.post_weekly(client, dry_run=dry),
+            "stipend": s.pay_due_stipend(dry_run=dry)})
 
     if tail.endswith("/cron/sweep"):
         return _run_cron(lambda s, client, dry: {
             **s.sweep_pending(client, dry_run=dry),
-            "fixtures": s.sweep_fixtures(client, dry_run=dry)})
+            "fixtures": s.sweep_fixtures(client, dry_run=dry),
+            "stipend": s.pay_due_stipend(dry_run=dry)})
 
     if tail.endswith("/ladder"):
         return _render_ladder()
