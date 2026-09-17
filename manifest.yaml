@@ -14,6 +14,10 @@ features:
       type: global
       callback_id: tt_log_shortcut
       description: Record the games you just played and update the ladder
+    - name: Schedule a table tennis match
+      type: global
+      callback_id: tt_schedule_shortcut
+      description: Put a fixture up for the channel to bet on
   slash_commands:
     - command: /tt
       url: https://tt-ranker.vercel.app/slack/events

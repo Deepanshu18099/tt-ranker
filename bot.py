@@ -16,7 +16,7 @@ store.py for why the rating maths happens at confirmation time rather than here.
 import logging
 import os
 import ssl
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from slack_bolt import App
 from slack_sdk import WebClient
@@ -399,11 +399,13 @@ def _users_block(block_id, label, hint=None, initial=None):
     return block
 
 
-def _channel_block():
-    """Where the confirmation prompt should be posted.
+def _channel_block(label="Post the result in", hint="Your opponent confirms it there."):
+    """Which channel this form's message belongs in.
 
     Only shown when the form was opened from the shortcuts menu, which carries
     no channel context at all — a slash command already knows where it was run.
+    The wording is per-form: a result goes somewhere to be confirmed, a fixture
+    goes somewhere to be bet on.
     """
     element = {"type": "conversations_select", "action_id": "v",
                "default_to_current_conversation": True,
@@ -413,9 +415,8 @@ def _channel_block():
     if HOME_CHANNEL:
         element["initial_conversation"] = HOME_CHANNEL
     return {"type": "input", "block_id": "channel", "element": element,
-            "label": {"type": "plain_text", "text": "Post the result in"},
-            "hint": {"type": "plain_text",
-                     "text": "Your opponent confirms it there."}}
+            "label": {"type": "plain_text", "text": label},
+            "hint": {"type": "plain_text", "text": hint}}
 
 
 def build_log_modal(caller="", channel_id="", pick_channel=False):
@@ -1282,6 +1283,8 @@ def build_app(process_before_response=False, token_verification=True):
     app.action(DISPUTE_ACTION)(_wrap_action(handle_dispute))
     app.view(LOG_MODAL)(handle_log_modal)
     app.shortcut(LOG_SHORTCUT)(handle_log_shortcut)
+    app.shortcut(SCHEDULE_SHORTCUT)(handle_schedule_shortcut)
+    app.view(SCHEDULE_MODAL)(handle_schedule_modal)
     app.action(BET_ACTION)(_wrap_action(handle_bet_button))
     app.action(CANCEL_FIXTURE_ACTION)(_wrap_action(handle_cancel_fixture))
     app.view(BET_MODAL)(handle_bet_modal)
@@ -1397,34 +1400,155 @@ def pool_line(record, pot=None):
     return (f":moneybag: *{fmt_spins(pot['total'])}* in the pot\n" + "\n".join(rows))
 
 
+SCHEDULE_MODAL = "tt_schedule_modal"
+SCHEDULE_SHORTCUT = "tt_schedule_shortcut"
+
+
+def open_fixture(side_a, side_b, when, caller, channel, client, now=None, logger=None):
+    """Create a fixture and post it. Returns None, or a message for the caller.
+
+    Shared by the typed command, the form and the shortcut, so none of them can
+    drift on what happens once a valid fixture is entered.
+    """
+    now = now or store.now_ist()
+    record = betting.schedule(side_a, side_b, when, created_by=caller,
+                              channel=channel, now=now)
+    try:
+        resp = client.chat_postMessage(
+            channel=channel, blocks=fixture_blocks(record, now),
+            text=f"{plain_side(side_a)} vs {plain_side(side_b)}, {fmt_when(record, now)}.")
+    except Exception as e:
+        # No message means nobody can bet on it, so don't leave one standing.
+        betting.claim(record["id"])
+        betting.void(record, "could not be posted", now)
+        (logger or log).warning("could not post fixture: %s", e)
+        return (":warning: I couldn't post in that channel — invite me there "
+                "and try again.")
+    record["ts"], record["channel"] = resp["ts"], resp["channel"]
+    betting.save(record)
+    return None
+
+
+def _default_start(now=None):
+    """An hour out, rounded up to the next quarter — near enough to be plausible,
+    round enough to look deliberate."""
+    when = ((now or store.now_ist()) + timedelta(hours=1)).replace(second=0, microsecond=0)
+    return when + timedelta(minutes=(15 - when.minute % 15) % 15)
+
+
+def build_schedule_modal(caller="", channel_id="", pick_channel=False, now=None):
+    """The form behind a bare `/tt schedule`.
+
+    A native date-and-time picker rather than a text box: "6pm" has to be parsed,
+    guessed at across midnight and echoed back to be checked, while a picker is
+    unambiguous the moment it's set.
+    """
+    blocks = [
+        _users_block("side_a", "Your side", initial=[caller] if caller else None,
+                     hint="Add a partner for doubles."),
+        _users_block("side_b", "Opponents"),
+        {"type": "input", "block_id": "when",
+         "label": {"type": "plain_text", "text": "First serve"},
+         "hint": {"type": "plain_text",
+                  "text": "Betting shuts at this moment — until then anyone "
+                          "in the channel can back either side."},
+         "element": {"type": "datetimepicker", "action_id": "v",
+                     "initial_date_time": int(_default_start(now).timestamp())}},
+    ]
+    if pick_channel:
+        blocks.append(_channel_block("Put the fixture in",
+                                     "Where people will see it and bet on it."))
+    return {
+        "type": "modal",
+        "callback_id": SCHEDULE_MODAL,
+        "private_metadata": channel_id or "",
+        "title": {"type": "plain_text", "text": "Schedule a match"},
+        "submit": {"type": "plain_text", "text": "Put it up"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": blocks,
+    }
+
+
 def handle_schedule(command, respond, client, bot_id=None, logger=None):
     """`/tt schedule @bob 6pm` — a fixture, and a betting window that shuts when
-    it starts."""
+    it starts. Bare, it opens the form."""
     caller = command["user_id"]
     _, rest = parsing.split_subcommand(command.get("text", ""))
     now = store.now_ist()
+
+    if not rest.strip():
+        try:
+            client.views_open(trigger_id=command["trigger_id"],
+                              view=build_schedule_modal(caller,
+                                                        command.get("channel_id", ""),
+                                                        now=now))
+        except Exception as e:
+            (logger or log).warning("schedule modal failed: %s", e)
+            respond(":warning: Couldn't open the form — type it instead: "
+                    "`/tt schedule @opponent 6pm`")
+        return
+
     try:
         side_a, side_b, when = parsing.parse_schedule(rest, caller=caller,
                                                       bot_id=bot_id, now=now)
     except parsing.ParseError as e:
         respond(f":warning: {e}")
         return
+    error = open_fixture(side_a, side_b, when, caller, command["channel_id"],
+                         client, now, logger)
+    if error:
+        respond(error)
 
-    record = betting.schedule(side_a, side_b, when, created_by=caller,
-                              channel=command["channel_id"], now=now)
+
+def handle_schedule_shortcut(ack, shortcut, client=None, logger=None):
+    """The shortcuts-menu entry. No channel context, so the form asks."""
+    ack()
+    user = shortcut["user"]["id"]
     try:
-        resp = client.chat_postMessage(
-            channel=command["channel_id"], blocks=fixture_blocks(record, now),
-            text=f"{plain_side(side_a)} vs {plain_side(side_b)}, {fmt_when(record, now)}.")
+        client.views_open(trigger_id=shortcut["trigger_id"],
+                          view=build_schedule_modal(user, pick_channel=True))
     except Exception as e:
-        betting.void(record, "could not be posted", now)
-        betting.claim(record["id"])
-        (logger or log).warning("could not post fixture: %s", e)
-        respond(":warning: I couldn't post in this channel — invite me here and try again.")
+        (logger or log).warning("schedule shortcut failed: %s", e)
+        _dm(client, user, ":warning: Couldn't open the form. Put a fixture up "
+                          "with `/tt schedule @opponent 6pm` instead.", logger=logger)
+
+
+def handle_schedule_modal(ack, body, view, client=None, logger=None):
+    """Validate in place, then hand off to the same path as the typed command."""
+    state = view["state"]["values"]
+    side_a = _modal_value(state, "side_a", "selected_users") or []
+    side_b = _modal_value(state, "side_b", "selected_users") or []
+    epoch = _modal_value(state, "when", "selected_date_time")
+    channel = (_modal_value(state, "channel", "selected_conversation")
+               or view.get("private_metadata") or "")
+    now = store.now_ist()
+
+    errors, when = {}, None
+    try:
+        parsing.validate_sides(side_a, side_b)
+    except parsing.ParseError as e:
+        errors["side_b"] = str(e)
+    if not epoch:
+        errors["when"] = "Pick when it starts."
+    else:
+        when = datetime.fromtimestamp(int(epoch), tz=store.IST)
+        if when <= now:
+            errors["when"] = "That's already past — betting would shut immediately."
+        elif when - now > timedelta(days=parsing.MAX_LEAD_DAYS):
+            errors["when"] = (f"More than {parsing.MAX_LEAD_DAYS} days out. "
+                              "Put it up nearer the time.")
+    if not channel and "channel" in state:
+        errors["channel"] = "Pick where to post it."
+    if errors:
+        ack(response_action="errors", errors=errors)
         return
-    record["ts"] = resp["ts"]
-    record["channel"] = resp["channel"]
-    betting.save(record)
+
+    ack()
+    caller = body["user"]["id"]
+    error = open_fixture(side_a, side_b, when, caller, channel or caller,
+                         client, now, logger)
+    if error:
+        _dm(client, caller, error, logger=logger)
 
 
 def handle_bet(command, respond, client=None, bot_id=None, logger=None):

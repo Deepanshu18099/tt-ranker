@@ -55,7 +55,8 @@ Everything is one slash command, `/tt`.
 | `/tt name Your Name` | How you appear on the web ladder |
 | `/tt name @bob Bob Smith` | Admins only — set it for someone else |
 | `/tt intro` | Post the how-it-works message, for pinning |
-| `/tt schedule @bob 6pm` | Put up a fixture the channel can bet on |
+| **`/tt schedule`** · shortcuts menu → *Schedule a table tennis match* | **Opens a form — pick the players and a start time** |
+| `/tt schedule @bob 6pm` | Or type it — `in 30m`, `6pm`, `6:30pm` and `18:30` all work |
 | `/tt book` · `/tt wallet` | Open fixtures · your spins |
 | `/tt help` | All of the above, in Slack |
 
@@ -634,10 +635,34 @@ Fixtures can be scheduled, and the channel bets on them in **spins** — play
 money, no real stakes.
 
 ```
-/tt schedule @bob 6pm          →  a fixture, and a betting window
+/tt schedule                   →  a form: players, and a start time
+/tt schedule @bob 6pm          →  or type it
 /tt book                       →  what's open
 /tt wallet                     →  your balance and recent moves
 /tt bet 12 a 50                →  the typed route; the buttons are the usual one
+```
+
+The form uses a native **date-and-time picker** rather than a text box. `6pm` has
+to be parsed, guessed at across midnight and echoed back to be checked; a picker
+is unambiguous the moment it's set. It defaults to an hour out, rounded up to
+the next quarter.
+
+```
+┌─ Schedule a match ────────────────────────┐
+│  Your side        [ @you            ▾ ]   │
+│  Add a partner for doubles.               │
+│                                           │
+│  Opponents        [ @bob            ▾ ]   │
+│                                           │
+│  First serve      [ 17 Sep  18:00     ]   │
+│  Betting shuts at this moment — until     │
+│  then anyone in the channel can back      │
+│  either side.                             │
+│                                           │
+│  Put the fixture in   [ #table-tennis ▾ ] │  ← shortcuts menu only
+│                                           │
+│                   [ Cancel ]  [ Put it up]│
+└───────────────────────────────────────────┘
 ```
 
 The fixture message carries a **Back _____** button for each side. Unlike a

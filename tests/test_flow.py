@@ -1465,3 +1465,139 @@ def test_betting_by_command_works_too(fake, client):
 
 def test_a_bet_on_a_fixture_that_does_not_exist(fake, client):
     assert "No fixture" in said(run("bet 999 a 50", client))
+
+
+# --- the scheduling form ---------------------------------------------------
+
+def schedule_form(client, user=A):
+    run("schedule", client, user=user)
+    return client.views_open.call_args.kwargs["view"]
+
+
+def submit_schedule(client, side_a, side_b, when, user=A, channel="C1", extra=None):
+    state = {"side_a": {"v": {"selected_users": side_a}},
+             "side_b": {"v": {"selected_users": side_b}},
+             "when": {"v": {"selected_date_time": int(when.timestamp()) if when else None}}}
+    state.update(extra or {})
+    ack = MagicMock()
+    bot.handle_schedule_modal(ack, {"user": {"id": user}},
+                              {"state": {"values": state}, "private_metadata": channel},
+                              client=client)
+    return ack
+
+
+def test_a_bare_schedule_opens_the_form(fake, client):
+    view = schedule_form(client)
+    assert view["callback_id"] == bot.SCHEDULE_MODAL
+    assert [b["block_id"] for b in view["blocks"]] == ["side_a", "side_b", "when"]
+
+
+def test_the_form_uses_a_real_date_picker(fake, client):
+    """"6pm" has to be parsed, guessed across midnight and echoed back to be
+    checked. A picker is unambiguous the moment it's set."""
+    when = next(b for b in schedule_form(client)["blocks"] if b["block_id"] == "when")
+    assert when["element"]["type"] == "datetimepicker"
+    assert when["element"]["initial_date_time"] > int(store.now_ist().timestamp())
+
+
+def test_the_form_pre_picks_you_and_caps_each_side_at_two(fake, client):
+    blocks = schedule_form(client)["blocks"]
+    assert blocks[0]["element"]["initial_users"] == [A]
+    assert all(b["element"]["max_selected_items"] == 2 for b in blocks[:2])
+
+
+def test_the_default_start_is_an_hour_out_on_a_quarter(fake):
+    from datetime import datetime
+    odd = datetime(2026, 9, 17, 14, 7, 33, tzinfo=store.IST)
+    assert bot._default_start(odd) == datetime(2026, 9, 17, 15, 15, tzinfo=store.IST)
+    on_the_quarter = datetime(2026, 9, 17, 14, 15, tzinfo=store.IST)
+    assert bot._default_start(on_the_quarter) == datetime(2026, 9, 17, 15, 15,
+                                                          tzinfo=store.IST)
+
+
+def test_submitting_the_form_puts_a_fixture_up(fake, client):
+    when = store.now_ist() + timedelta(hours=2)
+    ack = submit_schedule(client, [A], [B], when)
+    ack.assert_called_once_with()
+    record = betting.get(fixture_id(client))
+    assert record["side_a"] == [A] and record["side_b"] == [B]
+    assert abs(betting.starts_at(record) - when).total_seconds() < 60
+
+
+def test_a_doubles_fixture_from_the_pickers_alone(fake, client):
+    submit_schedule(client, [A, B], [C, D], store.now_ist() + timedelta(hours=2))
+    record = betting.get(fixture_id(client))
+    assert record["side_a"] == [A, B] and record["side_b"] == [C, D]
+
+
+def test_a_fixture_from_the_form_can_be_bet_on_and_settles(fake, client):
+    submit_schedule(client, [A], [B], store.now_ist() + timedelta(hours=2))
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 200)
+    back(client, sid, D, "b", 100)
+    play_and_confirm(client, B)
+    assert betting.get(sid)["state"] == "settled"
+    assert betting.balance(C) == betting.START_SPINS + 100
+
+
+@pytest.mark.parametrize("side_a,side_b,when_offset,field,fragment", [
+    ([A], [], timedelta(hours=2), "side_b", "who played"),
+    ([A], [A], timedelta(hours=2), "side_b", "both sides"),
+    ([A], [B, C], timedelta(hours=2), "side_b", "Uneven sides"),
+    ([A], [B], timedelta(minutes=-5), "when", "already past"),
+    ([A], [B], timedelta(days=60), "when", "days out"),
+])
+def test_schedule_form_errors_come_back_on_the_field(fake, client, side_a, side_b,
+                                            when_offset, field, fragment):
+    ack = submit_schedule(client, side_a, side_b, store.now_ist() + when_offset)
+    kwargs = ack.call_args.kwargs
+    assert kwargs["response_action"] == "errors"
+    assert fragment in kwargs["errors"][field]
+    assert betting.live() == []          # nothing put up on a rejected form
+
+
+def test_a_missing_time_is_caught(fake, client):
+    ack = submit_schedule(client, [A], [B], None)
+    assert "Pick when it starts" in ack.call_args.kwargs["errors"]["when"]
+
+
+def test_a_form_that_cannot_open_falls_back_to_the_typed_route(fake, client):
+    client.views_open.side_effect = Exception("expired_trigger_id")
+    assert "type it instead" in said(run("schedule", client))
+
+
+# --- the scheduling shortcut ----------------------------------------------
+
+def schedule_shortcut(client, user=A):
+    ack = MagicMock()
+    bot.handle_schedule_shortcut(ack, {"user": {"id": user}, "trigger_id": "t.1"},
+                                 client=client)
+    return client.views_open.call_args.kwargs["view"]
+
+
+def test_the_shortcut_opens_the_same_form_plus_a_channel_picker(fake, client):
+    view = schedule_shortcut(client)
+    assert view["callback_id"] == bot.SCHEDULE_MODAL
+    assert [b["block_id"] for b in view["blocks"]] == \
+        ["side_a", "side_b", "when", "channel"]
+
+
+def test_a_shortcut_fixture_posts_to_the_chosen_channel(fake, client):
+    submit_schedule(client, [A], [B], store.now_ist() + timedelta(hours=2),
+                    channel="", extra={"channel": {"v": {"selected_conversation": "C_PICKED"}}})
+    assert channel_post(client).kwargs["channel"] == "C_PICKED"
+
+
+def test_the_shortcut_form_needs_a_channel(fake, client):
+    ack = submit_schedule(client, [A], [B], store.now_ist() + timedelta(hours=2),
+                          channel="", extra={"channel": {"v": {"selected_conversation": None}}})
+    assert "channel" in ack.call_args.kwargs["errors"]
+    assert betting.live() == []
+
+
+def test_a_schedule_shortcut_that_cannot_open_is_explained_by_dm(fake, client):
+    client.views_open.side_effect = Exception("expired_trigger_id")
+    ack = MagicMock()
+    bot.handle_schedule_shortcut(ack, {"user": {"id": A}, "trigger_id": "t"}, client=client)
+    assert dm_to(client, A) is not None
+    assert "/tt schedule @opponent" in dm_text(client, A)
