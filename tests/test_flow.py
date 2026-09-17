@@ -1281,7 +1281,7 @@ def test_scheduling_posts_a_fixture_with_both_sides_to_back(fake, client):
     run(f"schedule <@{B}> in 2h", client)
     posted = said(client.chat_postMessage)
     assert f"<@{A}>" in posted and f"<@{B}>" in posted
-    assert buttons_in(channel_post(client)).count(bot.BET_ACTION) == 2
+    assert set(buttons_in(channel_post(client))) >= set(bot.BET_ACTIONS)
 
 
 def test_a_fixture_states_the_time_it_resolved_to(fake, client):

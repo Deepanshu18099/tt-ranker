@@ -1321,7 +1321,8 @@ def build_app(process_before_response=False, token_verification=True):
     app.shortcut(LOG_SHORTCUT)(handle_log_shortcut)
     app.shortcut(SCHEDULE_SHORTCUT)(handle_schedule_shortcut)
     app.view(SCHEDULE_MODAL)(handle_schedule_modal)
-    app.action(BET_ACTION)(_wrap_action(handle_bet_button))
+    for action in BET_ACTIONS:
+        app.action(action)(_wrap_action(handle_bet_button))
     app.action(CANCEL_FIXTURE_ACTION)(_wrap_action(handle_cancel_fixture))
     app.view(BET_MODAL)(handle_bet_modal)
     app.event("member_joined_channel")(handle_member_joined)
@@ -1346,7 +1347,12 @@ def _wrap_action(fn):
 
 # --- betting ---------------------------------------------------------------
 
-BET_ACTION = "tt_bet"
+# One per side: an action_id has to be unique within its containing block, and
+# both Back buttons live in the same one. Sharing "tt_bet" between them made
+# Slack reject the whole message as invalid_blocks.
+BET_ACTION_A = "tt_bet_a"
+BET_ACTION_B = "tt_bet_b"
+BET_ACTIONS = (BET_ACTION_A, BET_ACTION_B)
 BET_MODAL = "tt_bet_modal"
 CANCEL_FIXTURE_ACTION = "tt_fixture_cancel"
 
@@ -1401,9 +1407,9 @@ def fixture_blocks(record, now=None):
                                    f"match: {who}"))
     if state == "open":
         blocks.append({"type": "actions", "block_id": f"tt_fixture_{sid}", "elements": [
-            _button(BET_ACTION, f"Back {plain_side(record['side_a'])}", f"{sid}:a",
+            _button(BET_ACTION_A, f"Back {plain_side(record['side_a'])}", f"{sid}:a",
                     style="primary"),
-            _button(BET_ACTION, f"Back {plain_side(record['side_b'])}", f"{sid}:b"),
+            _button(BET_ACTION_B, f"Back {plain_side(record['side_b'])}", f"{sid}:b"),
             _button(CANCEL_FIXTURE_ACTION, "Call it off", sid),
         ]})
     blocks.append(_context(f"Fixture `#{sid}` · set up by <@{record['created_by']}> · "
