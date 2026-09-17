@@ -152,3 +152,26 @@ def test_gains_are_green_and_losses_red():
     down = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "S"}, delta={"U1": -13})
     assert "&#9650;" in up and "&#9660;" in down
     assert ".up{color:#3FCB86}" in up and ".down{color:#FF7A70}" in down
+
+
+# --- spins -----------------------------------------------------------------
+
+def test_the_spins_table_ranks_the_richest_first():
+    html = page.render({"U1": P(), "U2": P()}, {"U1": "Sagnik", "U2": "Aman"}, [], {}, {}, 6,
+                       spins=[("U2", 7000, 2000), ("U1", 3000, -2000)], start_spins=5000)
+    block = html[html.index("<h2>Spins</h2>"):]
+    assert block.index("Aman") < block.index("Sagnik")
+    assert "7,000" in block and "2,000 up" in block and "2,000 down" in block
+    assert "10,000 in circulation" in block
+
+
+def test_a_table_where_nobody_has_moved_is_not_shown():
+    """Twelve identical 5,000s is not a leaderboard; it's noise above the
+    matches people actually came to read."""
+    html = page.render({"U1": P(), "U2": P()}, {}, [], {}, {}, 6,
+                       spins=[("U1", 5000, 0), ("U2", 5000, 0)], start_spins=5000)
+    assert "<h2>Spins</h2>" not in html
+
+
+def test_the_ladder_renders_without_spins_at_all():
+    assert "<h2>Spins</h2>" not in render({"U1": P(1042, 6, 2, 14, 6)})

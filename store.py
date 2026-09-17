@@ -172,6 +172,12 @@ def get_player(uid):
     return get_players([uid]).get(uid)
 
 
+def player_ids():
+    """Just the uids, in one call. all_players() pulls a hash per player, which
+    is wasted work when only the keys are wanted."""
+    return list(kv.smembers(PLAYERS_KEY))
+
+
 def all_players():
     """{uid: record} for the whole ladder — what the leaderboard ranks."""
     uids = kv.smembers(PLAYERS_KEY)

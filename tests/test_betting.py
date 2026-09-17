@@ -8,6 +8,7 @@ from datetime import timedelta
 import pytest
 
 import betting
+import kv
 import store
 from tests.fake_kv import FakeRedis
 
@@ -459,3 +460,67 @@ def test_a_transfer_cannot_reach_spins_already_staked(fake):
     ok, _ = betting.transfer(C, A, betting.START_SPINS - 399)
     assert not ok
     assert betting.pool(record["id"])["a"] == 400
+
+
+# --- the spins leaderboard -------------------------------------------------
+
+def test_the_richest_wallet_ranks_first():
+    ranked = betting.rank_wallets({A: 4000, B: 7000, C: 5000})
+    assert [uid for uid, _, _ in ranked] == [B, C, A]
+
+
+def test_the_table_says_how_far_each_wallet_moved():
+    ranked = dict((uid, net) for uid, _, net in
+                  betting.rank_wallets({A: 4000, B: 7000, C: betting.START_SPINS}))
+    assert ranked == {A: -1000, B: 2000, C: 0}
+
+
+def test_a_player_without_a_wallet_is_ranked_at_the_opening_balance():
+    """Nobody is missing from the table just because they never placed a bet —
+    their wallet would hold START_SPINS the moment it opened, so rank it so."""
+    ranked = betting.rank_wallets({A: 6000}, uids=[A, B])
+    assert (B, betting.START_SPINS, 0) in ranked
+    assert ranked[0][0] == A
+
+
+def test_ties_break_the_same_way_every_refresh():
+    once = betting.rank_wallets({B: 5000, A: 5000, C: 5000})
+    again = betting.rank_wallets({C: 5000, A: 5000, B: 5000})
+    assert once == again == [(A, 5000, 0), (B, 5000, 0), (C, 5000, 0)]
+
+
+def test_the_table_reads_from_the_real_wallets(fake):
+    betting.ensure_wallets([A, B])
+    betting.adjust(A, -300, "test", None)
+    betting.adjust(B, 300, "test", None)
+    ranked = betting.standings([A, B, C])
+    assert ranked[0] == (B, betting.START_SPINS + 300, 300)
+    assert ranked[-1] == (A, betting.START_SPINS - 300, -300)
+    assert sum(held for _, held, _ in ranked) == 3 * betting.START_SPINS
+
+
+def test_circulating_counts_what_is_staked_as_well_as_held(fake):
+    """A stake has left its wallet but not the economy — it comes back at
+    settlement. Counting wallets alone makes the total appear to shrink exactly
+    when betting is open, which is when someone is most likely to look."""
+    betting.ensure_wallets([A, B, C])
+    opening = betting.circulating()
+    assert opening == 3 * betting.START_SPINS
+
+    record = fixture_at()
+    betting.place_bet(record, C, "a", 4000)
+    assert sum(betting.balances().values()) == opening - 4000   # wallets dipped
+    assert betting.circulating() == opening                     # the economy did not
+
+    betting.claim(record["id"])
+    betting.settle(record, "a")
+    assert betting.circulating() == opening
+
+
+def test_the_total_agrees_with_the_table_under_it(fake):
+    """standings() ranks registered players who never opened a wallet at the
+    opening balance; a total that skipped them would contradict its own table."""
+    store.ensure_players([A, B, C])
+    kv.hset(betting.WALLET_KEY, A, 4000)     # only A has a real wallet
+    ranked = betting.standings(store.player_ids())
+    assert sum(held for _, held, _ in ranked) == betting.circulating(store.player_ids())

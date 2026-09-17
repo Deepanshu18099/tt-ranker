@@ -1265,6 +1265,7 @@ results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 • `/tt odds @bob` — who's favoured    • `/tt undo` — revert the last match you logged
 • `/tt register` — join early    • `/tt sync` — add everyone in this channel
 • `/tt name Your Name` — how you appear on the web ladder\n• `/tt intro` — post the how-it-works message, for pinning
+• `/tt wallet` — your spins    • `/tt rich` — the spins leaderboard
 
 *How the rating works*
 Everyone starts at *{elo.START_RATING}*. *Every game is rated on its own and \
@@ -1359,6 +1360,8 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_bet(command, respond, client, bot_id, logger=logger)
         elif sub == "wallet":
             handle_wallet(command, respond)
+        elif sub == "rich":
+            handle_rich(respond)
         elif sub == "book":
             handle_book(command, respond)
         elif sub == "transfer":
@@ -2014,8 +2017,54 @@ def handle_wallet(command, respond):
                    if betting.WEEKLY_STIPEND > 0 else "")
         lines.append(f"_Everyone starts with {fmt_spins(betting.START_SPINS)}"
                      f"{stipend}._")
-    lines.append("\n_`/tt book` for what's open to bet on._")
+    rank, size = wallet_rank_of(uid)
+    if rank and size > 1:
+        lines.append(f"\n_#{rank} of {size} wallets · `/tt rich` for the table · "
+                     "`/tt book` for what's open to bet on._")
+    else:
+        lines.append("\n_`/tt book` for what's open to bet on._")
     respond("\n".join(lines))
+
+
+RICH_LIMIT = 20
+
+
+def wallet_rank_of(uid):
+    """(rank, wallets) for one player on the spins table."""
+    ranked = betting.standings(store.player_ids())
+    for i, (u, _, _) in enumerate(ranked, start=1):
+        if u == uid:
+            return i, len(ranked)
+    return None, len(ranked)
+
+
+def rich_text(ranked, limit=RICH_LIMIT, title=f"Who's rich — {betting.CURRENCY}",
+              circulating=None):
+    """The spins leaderboard. Shared by `/tt rich` and anything else that wants
+    to say who is up. `ranked` is what betting.standings() returns."""
+    if not ranked:
+        return (f":moneybag: *{title}*\n_Nobody has a wallet yet — everyone opens with "
+                f"{fmt_spins(betting.START_SPINS)}._")
+    lines = [f":moneybag: *{title}*"]
+    for i, (uid, held, net) in enumerate(ranked[:limit]):
+        badge = MEDALS[i] if i < 3 else f"`{i + 1:>2}.`"
+        move = f"`{net:+,}`" if net else "`   —`"
+        lines.append(f"{badge}  <@{uid}> — *{fmt_spins(held)}*  {move}")
+    if len(ranked) > limit:
+        lines.append(f"_…and {len(ranked) - limit} more._")
+    # Passed in, not read here: a stake has left its wallet but not the economy,
+    # so summing this table under-reports while any fixture is open. Kept as an
+    # argument so the renderer stays pure.
+    total = circulating if circulating is not None else sum(h for _, h, _ in ranked)
+    lines.append(f"\n_{fmt_spins(total)} in circulation across {len(ranked)} wallets"
+                 f"{', open bets included' if circulating is not None else ''}. "
+                 f"Nothing mints them — a spin won is a spin somebody else lost._")
+    return "\n".join(lines)
+
+
+def handle_rich(respond):
+    uids = store.player_ids()
+    respond(rich_text(betting.standings(uids), circulating=betting.circulating(uids)))
 
 
 def handle_book(command, respond):

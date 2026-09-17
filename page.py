@@ -93,6 +93,16 @@ h2{margin:2.75rem 0 .35rem;font-size:1.05rem;font-weight:650;letter-spacing:-.01
   color:#C8DCE1;font-size:.88rem}
 .placing .need{color:#9FBEC6}
 
+/* spins: same rungs as the ladder, so it reads as a second table rather than
+   a different page. Gold only on the rank of the leader; gain/loss reuse the
+   ladder's green and red so nobody learns a second convention. */
+ol.spins{list-style:none;margin:1rem 0 0;padding:0;position:relative}
+ol.spins::before{content:"";position:absolute;left:1.05rem;top:0;bottom:0;
+  width:1px;background:rgba(234,242,241,.2)}
+.spins .rung{padding:.6rem 0}
+.spins .rating{font-size:1.2rem}
+.spins .move{margin-top:0}
+
 .session{padding:.9rem 0;border-bottom:1px solid rgba(234,242,241,.12)}
 .session:last-of-type{border-bottom:none}
 .sides{display:flex;flex-wrap:wrap;align-items:baseline;gap:.5rem;font-weight:600}
@@ -171,6 +181,7 @@ def _streak(player):
 
 
 VIEWS = (("", "Overall"), ("singles", "Singles"))
+SPINS_SHOWN = 10
 
 
 def _tabs(view):
@@ -184,7 +195,8 @@ def _tabs(view):
 
 
 def render(players, names, recent, week_delta, week_played, placement_games,
-           channel_hint="", updated="", view=""):
+           channel_hint="", updated="", view="", spins=None, start_spins=0,
+           circulating=None):
     """The whole page. Pure — every input is passed in, so it renders in a test
     without a database or a Slack client.
 
@@ -211,6 +223,10 @@ def render(players, names, recent, week_delta, week_played, placement_games,
     parts.append(_lead(ranked, placing, names, week_delta, placement_games))
     parts.append(_rungs(ranked, names, None if singles else week_delta, week_played))
     parts.append(_placing(placing, names, placement_games))
+    # Overall tab only: a spins table is neither singles nor doubles, and the
+    # singles view is there to be one thing.
+    if not singles:
+        parts.append(_spins(spins or [], names, start_spins, circulating))
     parts.append(_recent(recent, names))
     parts.append(_footer(placement_games, channel_hint, updated))
 
@@ -299,6 +315,38 @@ def _placing(placing, names, placement_games):
             f'<p class="note">{placement_games} games and you join the ladder above. '
             "Ratings are already moving.</p>"
             f'<ul class="placing">{"".join(chips)}</ul>')
+
+
+def _spins(spins, names, start_spins, circulating=None):
+    """The spins leaderboard. `spins` is [(uid, held, net)], richest first —
+    what betting.standings() returns. Only shown once somebody has actually
+    moved: a table of identical opening balances tells nobody anything."""
+    if not spins or not any(net for _, _, net in spins):
+        return ""
+    rows = []
+    for i, (uid, held, net) in enumerate(spins[:SPINS_SHOWN], start=1):
+        if net > 0:
+            move = f'<span class="move up">&#9650; {net:,} up</span>'
+        elif net < 0:
+            move = f'<span class="move down">&#9660; {abs(net):,} down</span>'
+        else:
+            move = '<span class="move">where they started</span>'
+        rows.append(
+            '<li class="rung">'
+            f'<span class="rank num{" top" if i == 1 else ""}">{i}</span>'
+            f'<span class="who"><span class="name">{_e(display_name(uid, names))}</span></span>'
+            f'<span class="score"><span class="rating num">{held:,}</span>{move}</span>'
+            "</li>")
+    # Passed in from betting.circulating(), which counts open stakes; summing
+    # this table would drop anything currently riding on a fixture.
+    total = circulating if circulating is not None else sum(h for _, h, _ in spins)
+    more = (f" Showing the top {SPINS_SHOWN} of {len(spins)}." if len(spins) > SPINS_SHOWN
+            else "")
+    return ("<h2>Spins</h2>"
+            f'<p class="note">Play money, bet on fixtures in Slack. Everyone opened with '
+            f'{start_spins:,} and nothing mints more, so a spin won is a spin somebody '
+            f'else lost. {total:,} in circulation, open bets included.{more}</p>'
+            '<ol class="spins">' + "".join(rows) + "</ol>")
 
 
 def _recent(recent, names):

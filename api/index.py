@@ -113,6 +113,7 @@ def _render_ladder():
     import kv
     if not kv.kv_available():
         return "<p>No database configured yet.</p>", 503, {"Content-Type": "text/html"}
+    import betting
     import bot
     import page
     import store
@@ -140,6 +141,9 @@ def _render_ladder():
         channel_hint=os.environ.get("TT_CHANNEL_NAME", ""),
         updated=store.now_ist().strftime("%H:%M IST"),
         view=view,
+        spins=betting.standings(players),
+        start_spins=betting.START_SPINS,
+        circulating=betting.circulating(players),
     )
     # Let a CDN hold it briefly so a channel-wide click doesn't become a
     # thundering herd, while staying fresh enough to feel live.

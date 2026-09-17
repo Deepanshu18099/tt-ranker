@@ -1859,3 +1859,23 @@ def test_an_overdraft_is_refused_with_the_real_balance(fake, client, admin):
 def test_a_transfer_shows_up_in_the_wallet(fake, client, admin):
     run(f"transfer <@{B}> 500", client, user=ADMIN)
     assert f"<@{ADMIN}>" in said(run("wallet", client, user=B))
+
+
+# --- the spins leaderboard -------------------------------------------------
+
+def test_rich_lists_wallets_richest_first(fake, client):
+    run("register", client, user=A)
+    run("register", client, user=B)
+    run("register", client, user=C)
+    fake.exec(["HSET", "tt:wallet", A, 4000, B, 7000])
+    out = said(run("rich", client, user=C))
+    assert out.index(f"<@{B}>") < out.index(f"<@{C}>") < out.index(f"<@{A}>")
+    assert "7,000 spins" in out and "+2,000" in out and "-1,000" in out
+    assert "16,000 spins in circulation" in out
+
+
+def test_the_wallet_says_where_you_stand(fake, client):
+    run("register", client, user=A)
+    run("register", client, user=B)
+    fake.exec(["HSET", "tt:wallet", B, 9000])
+    assert "#2 of 2 wallets" in said(run("wallet", client, user=A))

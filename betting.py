@@ -95,6 +95,42 @@ def balances():
     return out
 
 
+def standings(uids=None):
+    """The spins leaderboard: [(uid, held, net)] richest first.
+
+    Pure ranking over `balances()`. Anyone in `uids` without a wallet is ranked
+    at START_SPINS, because that is what their wallet would hold the moment it
+    was opened — `balance()` already reads it that way. Ties break on uid so the
+    order is stable between two refreshes.
+    """
+    return rank_wallets(balances(), uids)
+
+
+def rank_wallets(held, uids=None):
+    """Sort wallets richest first, filling in anyone who never opened one. Kept
+    separate from the store read so the ranking itself can be tested cold."""
+    table = {u: START_SPINS for u in (uids or []) if u}
+    table.update(held or {})
+    ranked = sorted(table.items(), key=lambda item: (-item[1], item[0]))
+    return [(uid, spins, spins - START_SPINS) for uid, spins in ranked]
+
+
+def circulating(uids=None):
+    """Every spin in existence: in wallets, plus whatever is staked on a fixture
+    that has not settled.
+
+    A stake has left its wallet but not the economy — it comes back at
+    settlement. Counting wallets alone makes the total appear to shrink whenever
+    betting is open, which is exactly when someone is most likely to look.
+
+    Fills in anyone in `uids` without a wallet at START_SPINS, the same way
+    standings() does, so the total and the table it sits under agree.
+    """
+    held = {u: START_SPINS for u in (uids or []) if u}
+    held.update(balances() or {})
+    return sum(held.values()) + sum(pool(r["id"])["total"] for r in live())
+
+
 def adjust(uid, amount, reason, now=None):
     """Move a wallet and note why. Returns the new balance."""
     ensure_wallets([uid])
