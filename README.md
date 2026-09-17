@@ -244,12 +244,12 @@ rewrite the ladder, and a single deuce shouldn't erase a win.
 |---|---|
 | Your first 50 **games** (provisional) | 16 |
 | After that | 11 |
-| Doubles | ×0.75 of the above |
+| Doubles | ×0.5 of the above |
 
 Counted in games rather than sessions, because a session can be any length. New
 players move fast so they reach roughly the right level in a few sessions rather
-than a season. Doubles counts 75% because you only control half of a doubles
-match.
+than a season. Doubles counts half, because half of every doubles result is your
+partner's play and none of it is yours.
 
 ### Plus one correction: the favourite's blowout counts for less
 
@@ -323,7 +323,8 @@ two games easily and dropping one, and the model is allowed to say so.
 ### Doubles
 
 The pair is rated at the **average** of the two partners, both partners take the
-**same** change, at 75% of the usual K.
+**same** change, at **half** the usual K — half of any doubles result is your
+partner's doing, so it says half as much about you.
 
 > Alice (1200) and Ben (900) — a 1050 pair on paper.
 
@@ -395,8 +396,15 @@ Every constant above is a named value at the top of [elo.py](elo.py) —
 `START_RATING`, `K_ESTABLISHED`, `K_PROVISIONAL`, `PROVISIONAL_GAMES`,
 `DOUBLES_K_FACTOR`, `MOV_BASELINE`, `MOV_GAIN`, `MOV_MIN`/`MOV_MAX`,
 `UPSET_SCALE`, `RATING_FLOOR` — plus `PLACEMENT_GAMES` in [bot.py](bot.py).
-Change one, run `pytest`, redeploy. Ratings already recorded are not
-recalculated.
+Change one, run `pytest`, redeploy.
+
+To apply a change to **matches already played**, run
+`python scripts/recompute.py` — it replays every stored match in the order they
+were applied and rewrites ratings, counters, undo snapshots and the weekly
+figures as if the new numbers had always been in force. Dry run by default, and
+it refuses outright if any match has aged out of history, since a replay on
+partial history would be wrong rather than merely incomplete. It never touches
+spins or settled bets.
 
 Two knobs do most of the tuning:
 

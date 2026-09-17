@@ -1232,7 +1232,8 @@ Everyone starts at *{elo.START_RATING}*. *Every game is rated on its own and \
 they add up* — so 10 games count for more than 3, and a session that splits \
 evenly moves nobody. Each game is worth more when you beat someone above you, \
 more when you win it decisively, and less when a big favourite wins it. \
-Doubles counts {int(elo.DOUBLES_K_FACTOR * 100)}% as hard as singles.
+Doubles counts {int(elo.DOUBLES_K_FACTOR * 100)}% as hard as singles \
+— half of it is your partner.
 
 You're provisional (bigger swings) for your first {elo.PROVISIONAL_GAMES} games \
 and join the ladder proper after {PLACEMENT_GAMES}. Full details: \

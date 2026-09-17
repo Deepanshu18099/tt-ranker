@@ -40,9 +40,9 @@ K_ESTABLISHED = 11
 PROVISIONAL_GAMES = 50
 
 # You control about half of a doubles match, so it carries about half the
-# evidence about *you*. 0.75 rather than 0.5: partners are picked ad hoc here, so
-# over many games a doubles record still says a lot about a player.
-DOUBLES_K_FACTOR = 0.75
+# evidence about *you*: your partner's play is in every result, and none of it
+# is yours.
+DOUBLES_K_FACTOR = 0.5
 
 # The margin curve is calibrated on a game to 11: mov == 1.0 at a 4-point margin,
 # which is a normal, clearly-won 11-7.
