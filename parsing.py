@@ -47,6 +47,7 @@ SUBCOMMANDS = {
     "sync": "sync", "backfill": "sync",
     "intro": "intro", "welcome": "intro", "rules": "intro", "howto": "intro",
     "name": "name", "callme": "name", "rename": "name",
+    "who": "who", "whois": "who", "lookup": "who", "find": "who",
     "nudge": "nudge", "askall": "nudge",
     "schedule": "schedule", "sched": "schedule", "fixture": "schedule",
     "challenge": "schedule",

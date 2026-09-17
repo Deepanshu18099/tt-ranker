@@ -54,6 +54,7 @@ Everything is one slash command, `/tt`.
 | `/tt sync` | Put everyone already in this channel on the ladder |
 | `/tt name Your Name` | How you appear on the web ladder |
 | `/tt name @bob Bob Smith` | Admins only — set it for someone else |
+| `/tt who ChumChum` · `/tt who @bob` | Who is that? · what are they called? |
 | `/tt intro` · `/tt intro clear` | Post the how-it-works message · take it down |
 | **`/tt schedule`** · shortcuts menu → *Schedule a table tennis match* | **Opens a form — pick the players and a start time** |
 | `/tt schedule @bob 6pm` | Or type it — `in 30m`, `6pm`, `6:30pm` and `18:30` all work |
@@ -670,6 +671,19 @@ Most people never get round to setting their own, so an admin can do it for
 them: `/tt name @bob Bob Smith`. The player is DM'd that it happened and how to
 change it — a name is how you're shown to the whole office, and a leaderboard is
 no way to find out it changed.
+
+**`/tt who`** goes the other way. The page can't render a Slack mention, so it
+shows chosen names and a reader has no way back from *ChumChum* to a person:
+
+```
+/tt who ChumChum   →  ChumChum is @bob
+/tt who chum       →  same — case-insensitive, partial matches count
+/tt who @bob       →  @bob is ChumChum on the ladder
+/tt who            →  everyone, names first
+```
+
+Matching is tiered — exact, then prefix, then substring — so *Ram* doesn't lose
+to *Ramesh*, which is precisely when you need the lookup.
 
 
 ---

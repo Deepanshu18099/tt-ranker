@@ -1911,3 +1911,87 @@ def test_history_for_one_player_on_one_day(fake, client):
 def test_an_unreadable_day_is_explained(fake, client):
     out = said(run("history 2026-13-40", client))
     assert "don't know which day" in out and "yesterday" in out
+
+
+# --- who is that on the ladder? -------------------------------------------
+
+def test_a_ladder_name_resolves_to_a_mention(fake, client):
+    """The page can't render a mention, so it shows chosen names — this is the
+    way back from one of those to a person."""
+    store.set_name(B, "ChumChum")
+    store.ensure_players([A, B])
+    assert f"*ChumChum* is <@{B}>" in said(run("who ChumChum", client))
+
+
+def test_the_lookup_does_not_care_about_case(fake, client):
+    store.set_name(B, "ChumChum")
+    store.ensure_players([B])
+    assert f"<@{B}>" in said(run("who chumchum", client))
+
+
+def test_a_partial_name_is_enough(fake, client):
+    store.set_name(B, "farzibatman")
+    store.ensure_players([B])
+    assert f"<@{B}>" in said(run("who farzi", client))
+
+
+def test_an_exact_name_beats_a_longer_one_containing_it(fake, client):
+    """Ram shouldn't lose to Ramesh — which is exactly when you need this."""
+    store.set_name(B, "Ram")
+    store.set_name(C, "Ramesh")
+    store.ensure_players([B, C])
+    out = said(run("who Ram", client))
+    assert f"<@{B}>" in out and f"<@{C}>" not in out
+
+
+def test_several_matches_are_all_offered(fake, client):
+    store.set_name(B, "Ramesh")
+    store.set_name(C, "Ramona")
+    store.ensure_players([B, C])
+    out = said(run("who Ram", client))
+    assert "2 match" in out and f"<@{B}>" in out and f"<@{C}>" in out
+
+
+def test_a_name_nobody_has(fake, client):
+    store.ensure_players([A])
+    assert "Nobody on the ladder is called" in said(run("who Nobody", client))
+
+
+def test_the_lookup_runs_the_other_way_too(fake, client):
+    store.set_name(B, "ChumChum")
+    store.ensure_players([B])
+    assert "is *ChumChum* on the ladder" in said(run(f"who <@{B}>", client))
+
+
+def test_someone_who_never_set_a_name_is_told_apart_from_one_who_did(fake, client):
+    store.remember_handle(B, "bob.smith")
+    store.ensure_players([B, C])
+    assert "their Slack name" in said(run(f"who <@{B}>", client))
+    assert "hasn't got a ladder name yet" in said(run(f"who <@{C}>", client))
+
+
+def test_bare_who_lists_everyone_against_their_mention(fake, client):
+    store.set_name(A, "danger")
+    store.set_name(B, "ChumChum")
+    store.ensure_players([A, B])
+    out = said(run("who", client))
+    assert f"*ChumChum* — <@{B}>" in out and f"*danger* — <@{A}>" in out
+    assert out.index("ChumChum") < out.index("danger")      # alphabetical
+
+
+def test_a_player_with_no_name_at_all_is_still_findable(fake, client):
+    """They show as a stub on the page, so the stub has to resolve."""
+    store.ensure_players([A])
+    assert f"<@{A}>" in said(run(f"who @{A[-4:]}", client))
+
+
+def test_the_list_puts_names_first_and_collapses_the_rest(fake, client):
+    """Sorted together, `@abcd` stubs sort above every real name and bury the
+    only rows the command exists to show."""
+    store.set_name(A, "danger")
+    store.ensure_players([A, B, C, D])      # B, C, D have no name
+    out = said(run("who", client))
+    assert out.index("danger") < out.index("haven't set a name")
+    assert "3 haven't set a name" in out
+    for uid in (B, C, D):
+        assert f"<@{uid}>" in out

@@ -795,6 +795,102 @@ def handle_nudge(command, respond, client, logger=None):
             + ("" if sent == len(missing) else " The rest have app DMs turned off."))
 
 
+def find_by_name(query, names, known=()):
+    """uids whose ladder name matches `query`.
+
+    Tiered — exact, then prefix, then substring — and the first tier with any
+    hits wins. Without that, someone called Ram loses to Ramesh whenever both
+    are on the ladder, which is exactly when you need the lookup.
+    """
+    query = " ".join((query or "").split()).lower()
+    if not query:
+        return []
+    pool = {uid: (names.get(uid) or f"@{uid[-4:]}") for uid in known}
+    pool.update({uid: name for uid, name in names.items() if name})
+    exact, prefix, anywhere = [], [], []
+    for uid, name in pool.items():
+        low = name.lower()
+        if low == query:
+            exact.append(uid)
+        elif low.startswith(query):
+            prefix.append(uid)
+        elif query in low:
+            anywhere.append(uid)
+    return sorted(exact) or sorted(prefix) or sorted(anywhere)
+
+
+def handle_who(command, respond, bot_id=None):
+    """`/tt who ChumChum` — who is that in Slack? `/tt who @someone` — what are
+    they called on the ladder? Bare, the whole list.
+
+    The ladder page can't render a Slack mention, so it shows chosen names and
+    people have no way back from one to a person. This is that way back.
+    """
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    names = store.names()
+    known = list(store.all_players())
+
+    mentioned = parsing.mentions_in(rest, exclude=bot_id)
+    if mentioned:
+        lines = []
+        for uid in mentioned:
+            chosen = store.chosen_names().get(uid)
+            fallback = names.get(uid)
+            if chosen:
+                lines.append(f"<@{uid}> is *{chosen}* on the ladder.")
+            elif fallback:
+                lines.append(f"<@{uid}> shows as *{fallback}* — their Slack name, "
+                             "since they haven't set one. `/tt name` changes it.")
+            else:
+                lines.append(f"<@{uid}> hasn't got a ladder name yet — they show "
+                             f"as `@{uid[-4:]}`. `/tt name Their Name` sets one.")
+        respond("\n".join(lines))
+        return
+
+    query = rest.strip()
+    if not query:
+        respond(who_list(names, known))
+        return
+
+    found = find_by_name(query, names, known)
+    if not found:
+        respond(f":grey_question: Nobody on the ladder is called *{query}*. "
+                "`/tt who` lists everyone.")
+        return
+    if len(found) == 1:
+        uid = found[0]
+        respond(f":bust_in_silhouette: *{names.get(uid) or query}* is <@{uid}>.")
+        return
+    who = " · ".join(f"*{names.get(u) or u}* <@{u}>" for u in found)
+    respond(f":bust_in_silhouette: {len(found)} match *{query}*: {who}")
+
+
+def who_list(names, known):
+    """Every ladder name against its Slack mention.
+
+    People with a name come first and unnamed ones collapse to a single line at
+    the end. Listed together they sort by their `@abcd` stub, which puts twenty
+    placeholders above the names — burying the only rows the command exists to
+    show.
+    """
+    named, unnamed = [], []
+    for uid in known:
+        name = names.get(uid)
+        (named.append((name, uid)) if name else unnamed.append(uid))
+    if not named and not unnamed:
+        return ":grey_question: Nobody is on the ladder yet."
+
+    lines = [":bust_in_silhouette: *Who's who*"]
+    lines += [f"*{name}* — <@{uid}>"
+              for name, uid in sorted(named, key=lambda i: i[0].lower())]
+    if unnamed:
+        lines.append(f"\n_{len(unnamed)} haven't set a name and show as `@abcd` "
+                     "on the ladder: " + " ".join(f"<@{u}>" for u in sorted(unnamed))
+                     + "_")
+    lines.append("\n_`/tt who <name>` for one · `/tt name Your Name` to set yours._")
+    return "\n".join(lines)
+
+
 def handle_register(command, respond):
     uid = command["user_id"]
     fresh = store.ensure_players([uid])
@@ -1300,7 +1396,8 @@ results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 • `/tt pending` — awaiting confirmation
 • `/tt odds @bob` — who's favoured    • `/tt undo` — revert the last match you logged
 • `/tt register` — join early    • `/tt sync` — add everyone in this channel
-• `/tt name Your Name` — how you appear on the web ladder\n• `/tt intro` — post the how-it-works message, for pinning
+• `/tt name Your Name` — how you appear on the web ladder
+• `/tt who ChumChum` — who is that? · `/tt who @someone` — what are they called?\n• `/tt intro` — post the how-it-works message, for pinning
 • `/tt wallet` — your spins    • `/tt rich` — the spins leaderboard
 
 *How the rating works*
@@ -1388,6 +1485,8 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_intro(command, respond, client, logger=logger)
         elif sub == "name":
             handle_name(command, respond, client, context, logger=logger)
+        elif sub == "who":
+            handle_who(command, respond, bot_id)
         elif sub == "nudge":
             handle_nudge(command, respond, client, logger=logger)
         elif sub == "schedule":
