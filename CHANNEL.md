@@ -40,8 +40,9 @@ Then hover the message it posts → **⋯** → **Pin to channel**. New joiners 
 the same information as a DM automatically, but a pin is what people scroll back
 to when they forget the syntax.
 
-Re-run `/tt intro` and re-pin after any scoring change — the message is
-generated from the live constants, so it updates itself.
+Re-run `/tt intro` after any scoring change — it's generated from the live
+constants, so it updates itself, and re-running deletes the previous one rather
+than leaving a trail. `/tt intro clear` takes it down altogether.
 
 ## Order of operations
 

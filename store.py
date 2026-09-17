@@ -406,6 +406,23 @@ def undo_match(blob):
 
 # --- weekly counters -------------------------------------------------------
 
+# --- the pinned intro ------------------------------------------------------
+
+INTRO_KEY = "tt:intro"   # channel -> ts of the intro this bot last posted there
+
+
+def remember_intro(channel, ts):
+    kv.hset(INTRO_KEY, channel, ts)
+
+
+def last_intro(channel):
+    return kv.hget(INTRO_KEY, channel)
+
+
+def forget_intro(channel):
+    kv.hdel(INTRO_KEY, channel)
+
+
 # --- display names ---------------------------------------------------------
 
 # Two tiers, because they mean different things. A handle is what Slack happened

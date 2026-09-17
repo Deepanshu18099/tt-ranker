@@ -1440,7 +1440,9 @@ def test_the_wallet_command_shows_the_balance_and_recent_moves(fake, client):
     run(f"schedule <@{B}> in 2h", client)
     back(client, fixture_id(client), A, "a", 50)
     shown = said(run("wallet", client))
-    assert str(betting.START_SPINS - 50) in shown and "stake on" in shown
+    # formatted, not raw: balances are four figures now and carry a separator
+    assert bot.fmt_spins(betting.START_SPINS - 50) in shown
+    assert "stake on" in shown
 
 
 def test_the_book_lists_what_is_open(fake, client):
@@ -1651,3 +1653,67 @@ def test_logging_reports_the_real_reason_too(fake, client):
     client.chat_postMessage.side_effect = SlackRefusal("is_archived")
     assert "archived" in said(run(f"log <@{B}> 11-7", client))
     assert store.list_pending() == []
+
+
+# --- the intro replaces itself --------------------------------------------
+
+def test_posting_an_intro_remembers_where_it_went(fake, client):
+    run("intro", client)
+    assert store.last_intro("C1")        # the ts the post came back with
+
+
+def test_re_running_intro_replaces_the_old_one(fake, client):
+    """It's regenerated from live constants, so it gets re-run after every
+    change — a trail of stale intros is the default outcome otherwise."""
+    run("intro", client)
+    first_ts = store.last_intro("C1")
+    respond = run("intro", client)
+
+    client.chat_delete.assert_called_once_with(channel="C1", ts=first_ts)
+    assert "Replaced the old intro" in said(respond)
+    assert store.last_intro("C1") != first_ts
+
+
+def test_the_first_intro_is_not_announced_as_a_replacement(fake, client):
+    assert "Posted" in said(run("intro", client))
+    assert client.chat_delete.call_count == 0
+
+
+def test_clearing_takes_the_intro_down(fake, client):
+    run("intro", client)
+    ts = store.last_intro("C1")
+    respond = run("intro clear", client)
+    client.chat_delete.assert_called_once_with(channel="C1", ts=ts)
+    assert "taken down" in said(respond)
+    assert store.last_intro("C1") is None
+
+
+def test_clearing_when_there_is_nothing_to_clear(fake, client):
+    respond = run("intro clear", client)
+    assert "haven't got an intro posted here" in said(respond)
+    assert "Delete message" in said(respond)       # how to remove an older one
+
+
+def test_an_intro_deleted_by_hand_is_forgotten_anyway(fake, client):
+    """Most likely cause of a failed delete, and it must not wedge the command."""
+    run("intro", client)
+    client.chat_delete.side_effect = SlackRefusal("message_not_found")
+    run("intro clear", client)
+    assert store.last_intro("C1") is None
+
+
+@pytest.mark.parametrize("word", ["clear", "delete", "remove", "off", "unpin"])
+def test_the_ways_to_take_it_down(fake, client, word):
+    run("intro", client)
+    run(f"intro {word}", client)
+    assert store.last_intro("C1") is None
+
+
+def test_each_channel_keeps_its_own_intro(fake, client):
+    run("intro", client)
+    bot.handle_tt_command(MagicMock(),
+                          {"user_id": A, "text": "intro", "channel_id": "C2",
+                           "trigger_id": "t"},
+                          MagicMock(), client=client, context={})
+    assert store.last_intro("C1") and store.last_intro("C2")
+    assert store.last_intro("C1") != store.last_intro("C2")

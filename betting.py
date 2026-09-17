@@ -32,11 +32,11 @@ import kv
 import store
 
 CURRENCY = "spins"
-START_SPINS = 500
+START_SPINS = 5000
 # Nobody starts a week broke: a wallet can never go negative, so the stipend on
 # its own guarantees at least this much every Monday. No separate floor is
 # needed, and one that could never fire would be dead code in the money path.
-WEEKLY_STIPEND = 100
+WEEKLY_STIPEND = 1000
 MIN_BET = 5
 
 WALLET_KEY = "tt:wallet"

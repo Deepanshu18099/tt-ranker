@@ -873,22 +873,55 @@ CHANNEL_DESCRIPTION = (
 )
 
 
+def remove_intro(client, channel, logger=None):
+    """Take down the intro this bot last posted here. True if there was one."""
+    ts = store.last_intro(channel)
+    if not ts:
+        return False
+    try:
+        client.chat_delete(channel=channel, ts=ts)
+    except Exception as e:
+        # Already gone by hand, most likely. Forget it either way rather than
+        # keep pointing at a message that isn't there.
+        (logger or log).info("intro delete in %s failed: %s", channel, e)
+    store.forget_intro(channel)
+    return True
+
+
 def handle_intro(command, respond, client, logger=None):
     """`/tt intro` — post the how-it-works message, for pinning to the channel.
+    `/tt intro clear` takes it down again.
 
     A command rather than a wiki page so it can never drift from what the bot
     actually does: the thresholds in it are the constants the code runs on.
+    Which also means it gets re-run after every change, so posting *replaces*
+    the last one instead of leaving a trail of stale intros behind.
     """
+    channel = command["channel_id"]
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    if rest.strip().lower() in ("clear", "delete", "remove", "off", "unpin"):
+        if remove_intro(client, channel, logger):
+            respond(":wastebasket: Intro taken down.")
+        else:
+            respond(":information_source: I haven't got an intro posted here. "
+                    "If one is pinned from before I started keeping track, "
+                    "delete it by hand: hover it → ⋯ → *Delete message*.")
+        return
+
+    replaced = remove_intro(client, channel, logger)
     url = ladder_url()
     text = INTRO + (f"\n\n:link: *Live ladder:* {url}" if url else "")
     try:
-        client.chat_postMessage(channel=command["channel_id"], text=text)
+        resp = client.chat_postMessage(channel=channel, text=text)
     except Exception as e:
         (logger or log).warning("intro post failed: %s", e)
         respond(text)  # at least show the caller
         return
-    respond(":pushpin: Posted — pin it so new players find it "
-            "(hover the message → ⋯ → *Pin to channel*).")
+    store.remember_intro(resp["channel"], resp["ts"])
+    respond((":arrows_counterclockwise: Replaced the old intro. " if replaced
+             else ":pushpin: Posted. ")
+            + "Pin it so new players find it (hover the message → ⋯ → "
+              "*Pin to channel*). `/tt intro clear` takes it down.")
 
 
 def handle_member_joined(event, client=None, context=None, logger=None):

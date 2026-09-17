@@ -54,7 +54,7 @@ Everything is one slash command, `/tt`.
 | `/tt sync` | Put everyone already in this channel on the ladder |
 | `/tt name Your Name` | How you appear on the web ladder |
 | `/tt name @bob Bob Smith` | Admins only — set it for someone else |
-| `/tt intro` | Post the how-it-works message, for pinning |
+| `/tt intro` · `/tt intro clear` | Post the how-it-works message · take it down |
 | **`/tt schedule`** · shortcuts menu → *Schedule a table tennis match* | **Opens a form — pick the players and a start time** |
 | `/tt schedule @bob 6pm` | Or type it — `in 30m`, `6pm`, `6:30pm` and `18:30` all work |
 | `/tt book` · `/tt wallet` | Open fixtures · your spins |
@@ -714,8 +714,8 @@ rather than silently meaning it.
 
 | | |
 |---|---|
-| Everyone starts with | **500** |
-| Every Monday | **+100**, with the standings post |
+| Everyone starts with | **5,000** |
+| Every Monday | **+1,000**, with the standings post |
 | Smallest stake | **5** |
 
 A wallet can never go negative — stakes leave when the bet is placed and
