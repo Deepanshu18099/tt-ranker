@@ -195,28 +195,30 @@ def test_the_card_leaves_singles_out_until_there_are_any(fake):
 def test_the_page_has_a_tab_for_each_view(fake):
     import page
     html = page.render({}, {}, [], {}, {}, 6)
-    assert 'href="?view=singles"' in html and 'class="tabs"' in html
+    assert 'href="?view=overall"' in html and 'class="tabs"' in html
 
 
-def test_the_singles_tab_is_marked_when_it_is_the_one_showing(fake):
+def test_singles_is_the_tab_you_land_on(fake):
+    """It is the honest ladder — a doubles result can't say who did what."""
     import page
-    html = page.render({}, {}, [], {}, {}, 6, view="singles")
-    assert '<a class="on" href="?view=singles">Singles</a>' in html
+    html = page.render({}, {}, [], {}, {}, 6)
+    assert '<a class="on" href="?">Singles</a>' in html
+    assert page.VIEWS[0][1] == "Singles"
 
 
 def test_the_singles_view_explains_itself(fake):
     import page
-    html = page.render({}, {}, [], {}, {}, 6, view="singles")
-    assert "no doubles result has ever touched these numbers" in html
+    assert "no doubles result has ever touched these numbers" in \
+        page.render({}, {}, [], {}, {}, 6)
 
 
-def test_weekly_movement_is_hidden_on_the_singles_tab(fake):
+def test_weekly_movement_is_hidden_on_singles_and_shown_on_overall(fake):
     """The weekly figures count every game, so they'd be a lie next to a
     singles-only rating."""
     import page
     players = {A: dict(store.new_player(), rating=1100, games_won=10, wins=5)}
-    overall = page.render(players, {A: "S"}, [], {A: 25}, {A: 4}, 6)
-    singles = page.render(players, {A: "S"}, [], {A: 25}, {A: 4}, 6, view="singles")
+    singles = page.render(players, {A: "S"}, [], {A: 25}, {A: 4}, 6)
+    overall = page.render(players, {A: "S"}, [], {A: 25}, {A: 4}, 6, view="overall")
     assert "25 this week" in overall
     assert "this week" not in singles
 
@@ -236,3 +238,18 @@ def test_the_overall_bar_is_untouched(fake):
     play([A], [B], games=[(21, 14)] * bot.SINGLES_PLACEMENT_GAMES)
     board = bot.board_text(store.all_players(), view="overall")
     assert "Still placing" in board          # 4 games is short of the overall 6
+
+
+def test_an_old_singles_link_still_lands_on_singles(fake):
+    """?view=singles was pasted into the channel before singles became the
+    default; those links have to keep working and light the right tab."""
+    import page
+    legacy = page.render({}, {}, [], {}, {}, 6, view="")     # what the route folds it to
+    assert '<a class="on" href="?">Singles</a>' in legacy
+
+
+def test_overall_is_still_reachable(fake):
+    import page
+    html = page.render({}, {}, [], {}, {}, 6, view="overall")
+    assert '<a class="on" href="?view=overall">Overall</a>' in html
+    assert "no doubles result has ever touched" not in html

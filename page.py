@@ -197,7 +197,11 @@ def _streak(player):
     return ""
 
 
-VIEWS = (("", "Overall"), ("singles", "Singles"))
+# Singles first, and first means default: it is the honest ladder, since a
+# doubles result is one number split between two people and can't say who did
+# what. "" is singles; ?view=overall is everything. The old ?view=singles links
+# still resolve here — the route folds them onto "".
+VIEWS = (("", "Singles"), ("overall", "Overall"))
 SPINS_SHOWN = 10
 RECENT_SHOWN = 8       # the default glance
 FILTERED_SHOWN = 50    # once someone has asked for a day or a player, show it
@@ -223,7 +227,7 @@ def render(players, names, recent, week_delta, week_played, placement_games,
     the singles tab. The ranking and rendering below don't know the difference,
     which is the point of shaping a singles record like an ordinary one.
     """
-    singles = view == "singles"
+    singles = view != "overall"
     ranked = sorted(((u, p) for u, p in players.items()
                      if elo.games_played(p) >= placement_games),
                     key=lambda i: (-i[1]["rating"], -elo.games_played(i[1]), i[0]))

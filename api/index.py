@@ -159,19 +159,21 @@ def _render_ladder():
 
     players = store.all_players()
     view = request.args.get("view", "")
-    if view not in dict(page.VIEWS):
+    # ?view=singles predates singles becoming the default; fold it onto "" so
+    # links already pasted into the channel keep working and light the right tab.
+    if view == "singles" or view not in dict(page.VIEWS):
         view = ""
     week_delta, week_played = store.week_movement()
     recent, filters = _filtered_matches(players)
     body = page.render(
-        players=store.singles_players(players) if view == "singles" else players,
+        players=players if view == "overall" else store.singles_players(players),
         names=store.names(),
         recent=recent,
         week_delta=week_delta,
         week_played=week_played,
         filters=filters,
-        placement_games=(bot.SINGLES_PLACEMENT_GAMES if view == "singles"
-                         else bot.PLACEMENT_GAMES),
+        placement_games=(bot.PLACEMENT_GAMES if view == "overall"
+                         else bot.SINGLES_PLACEMENT_GAMES),
         channel_hint=os.environ.get("TT_CHANNEL_NAME", ""),
         updated=store.now_ist().strftime("%H:%M IST"),
         view=view,

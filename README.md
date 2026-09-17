@@ -150,7 +150,9 @@ skipping the confirmation is visible to the channel rather than silent.
 ### Two ladders
 
 `/tt board` counts everything. **`/tt board singles`** counts only singles, and
-the ladder page has a tab for each (`?view=singles`).
+the ladder page has a tab for each — **Singles is the one it opens on**, with
+`?view=overall` for everything. (Links pasted before that flip, `?view=singles`,
+still work.)
 
 Singles gets its **own Elo**, not the overall rating with doubles filtered out —
 the history that produced the overall number still has doubles in it. The two

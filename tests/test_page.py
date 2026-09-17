@@ -14,6 +14,9 @@ def P(rating=1000, wins=0, losses=0, gw=0, gl=0, streak=0):
 
 def render(players=None, names=None, recent=None, delta=None, played=None,
            placement=6, **kw):
+    """Defaults to the Overall tab. Singles is what the page lands on now, but
+    this file is about the page in general; the singles view has its own file."""
+    kw.setdefault("view", "overall")
     return page.render(players or {}, names or {}, recent or [],
                        delta or {}, played or {}, placement, **kw)
 
@@ -159,7 +162,8 @@ def test_gains_are_green_and_losses_red():
 
 def test_the_spins_table_ranks_the_richest_first():
     html = page.render({"U1": P(), "U2": P()}, {"U1": "Sagnik", "U2": "Aman"}, [], {}, {}, 6,
-                       spins=[("U2", 7000, 2000), ("U1", 3000, -2000)], start_spins=5000)
+                       spins=[("U2", 7000, 2000), ("U1", 3000, -2000)],
+                       start_spins=5000, view="overall")
     block = html[html.index("<h2>Spins</h2>"):]
     assert block.index("Aman") < block.index("Sagnik")
     assert "7,000" in block and "2,000 up" in block and "2,000 down" in block
