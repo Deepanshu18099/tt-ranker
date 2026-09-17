@@ -175,3 +175,59 @@ def test_a_table_where_nobody_has_moved_is_not_shown():
 
 def test_the_ladder_renders_without_spins_at_all():
     assert "<h2>Spins</h2>" not in render({"U1": P(1042, 6, 2, 14, 6)})
+# --- filters ---------------------------------------------------------------
+
+def recent_between(*pairs):
+    out = []
+    for i, (a, b) in enumerate(pairs, start=1):
+        out.append({"id": str(i), "side_a": [a], "side_b": [b], "games": [[11, 7]],
+                    "games_a": 1, "games_b": 0, "deltas": {a: 5, b: -5},
+                    "applied_at": "2026-09-17T18:42:00+05:30"})
+    return out
+
+
+def test_the_filter_bar_lists_every_player_and_the_day_chips():
+    html = render({"U1": P(1042, 6, 2, 14, 6), "U2": P()}, {"U1": "Sagnik", "U2": "Aman"},
+                  recent=recent_between(("U1", "U2")))
+    bar = html[html.index('id="filters"'):html.index("</form>")]
+    assert '<option value="U1"' in bar and ">Sagnik<" in bar and ">Aman<" in bar
+    assert ">Today<" in bar and ">Yesterday<" in bar and ">This week<" in bar
+    assert 'type="date"' in bar
+    assert 'class="on" href="?"' in bar       # "All" is lit when nothing is filtered
+
+
+def test_an_active_filter_is_lit_and_named_in_the_heading():
+    html = page.render({"U1": P(), "U2": P()}, {"U1": "Sagnik", "U2": "Aman"},
+                       recent_between(("U1", "U2")), {}, {}, 6,
+                       filters={"player": "U1", "day": "today", "label": "today"})
+    assert "Sessions · Sagnik · today" in html
+    assert 'class="on" href="?player=U1&amp;day=today"' in html
+    assert '<option value="U1" selected>' in html
+    assert "1 session." in html
+
+
+def test_an_empty_filtered_list_says_so_instead_of_vanishing():
+    html = page.render({"U1": P(), "U2": P()}, {"U1": "Sagnik"}, [], {}, {}, 6,
+                       filters={"player": "U1", "day": "yesterday", "label": "yesterday"})
+    assert "No sessions match" in html and 'id="filters"' in html
+
+
+def test_a_filtered_list_shows_more_than_the_default_glance():
+    lots = recent_between(*[("U1", "U2")] * 20)
+    plain = page.render({"U1": P(), "U2": P()}, {}, lots, {}, {}, 6)
+    filtered = page.render({"U1": P(), "U2": P()}, {}, lots, {}, {}, 6,
+                           filters={"player": "U1", "day": "", "label": ""})
+    assert plain.count('class="session"') == page.RECENT_SHOWN
+    assert filtered.count('class="session"') == 20
+
+
+def test_each_session_says_when_it_happened():
+    html = render({"U1": P(), "U2": P()}, {}, recent=recent_between(("U1", "U2")))
+    assert "Thu 17 Sep, 18:42" in html
+
+
+def test_filter_values_are_escaped():
+    html = page.render({"U1": P()}, {"U1": '<b>x</b>'}, [], {}, {}, 6,
+                       filters={"player": "U1", "day": "", "label": '"><script>'})
+    assert '"><script>' not in html and "&quot;&gt;&lt;script&gt;" in html
+    assert "&lt;b&gt;x&lt;/b&gt;" in html

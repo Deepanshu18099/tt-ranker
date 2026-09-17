@@ -171,3 +171,61 @@ def test_a_skunk_score_is_accepted():
     assert parse(f"{m(BOB)} 11-0")["games"] == [(11, 0)]
     assert parse(f"{m(BOB)} 21-14 11-0 21-16")["games"] == [(21, 14), (11, 0), (21, 16)]
     assert parse(f"{m(BOB)} 0-11")["games"] == [(0, 11)]
+
+
+# --- days ------------------------------------------------------------------
+
+from datetime import datetime, timedelta  # noqa: E402
+
+import store  # noqa: E402
+
+NOON = datetime(2026, 9, 17, 12, 30, tzinfo=store.IST)
+
+
+def test_today_is_midnight_to_midnight():
+    label, start, end = parsing.parse_day("today", NOON)
+    assert label == "today"
+    assert start == datetime(2026, 9, 17, tzinfo=store.IST)
+    assert end - start == timedelta(days=1)
+
+
+def test_yesterday_is_the_day_before():
+    label, start, end = parsing.parse_day("yesterday", NOON)
+    assert (label, start.day, end.day) == ("yesterday", 16, 17)
+
+
+def test_week_is_the_last_seven_days_including_today():
+    label, start, end = parsing.parse_day("week", NOON)
+    assert label == "this week"
+    assert start == datetime(2026, 9, 11, tzinfo=store.IST)
+    assert end == datetime(2026, 9, 18, tzinfo=store.IST)
+
+
+@pytest.mark.parametrize("text", ["2026-09-16", "16/9", "16/09/2026", "16.9.26"])
+def test_a_date_is_read_in_the_formats_people_type(text):
+    label, start, _ = parsing.parse_day(text, NOON)
+    assert start.date().isoformat() == "2026-09-16"
+    assert label == "yesterday"   # it happens to be, and the label should say so
+
+
+def test_a_date_further_back_is_labelled_as_a_date():
+    label, start, _ = parsing.parse_day("2026-09-01", NOON)
+    assert label == "1 Sep"
+    label, _, _ = parsing.parse_day("2025-09-01", NOON)
+    assert label == "1 Sep 2025"
+
+
+@pytest.mark.parametrize("text", ["", "tomorrow", "11-7", "2026-13-40", "31/2"])
+def test_nonsense_is_not_a_day(text):
+    assert parsing.parse_day(text, NOON) is None
+
+
+def test_the_day_can_sit_anywhere_in_the_command():
+    assert parsing.split_day("<@U1> today") == ("today", "<@U1>")
+    assert parsing.split_day("today <@U1>") == ("today", "<@U1>")
+    assert parsing.split_day("<@U1> this week") == ("thisweek", "<@U1>")
+    assert parsing.split_day("<@U1>") == ("", "<@U1>")
+
+
+def test_a_score_is_never_mistaken_for_a_date():
+    assert parsing.split_day("<@U1> 11-7 9-11") == ("", "<@U1> 11-7 9-11")

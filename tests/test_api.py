@@ -129,3 +129,37 @@ def test_the_setup_handshake_is_never_skipped(app):
         app.post("/slack/events", json={"type": "url_verification", "challenge": "x"},
                  headers={"X-Slack-Retry-Num": "1"})
     assert handler.handle.call_count == 1
+
+
+# --- the ladder's filters --------------------------------------------------
+
+def _rated(a, b, when):
+    import store
+    rec = store.create_pending([a], [b], [(11, 7)], logged_by=a, now=when)
+    assert store.claim_pending(rec["id"])
+    return store.apply_match(rec, confirmed_by=b, now=when)
+
+
+def test_the_ladder_filters_by_day_and_player(app, fake):
+    import store
+    from datetime import timedelta
+    now = store.now_ist()
+    store.set_name("U0AAA1", "Ann"); store.set_name("U0BBB1", "Bob")
+    store.set_name("U0CCC1", "Cal")
+    _rated("U0AAA1", "U0BBB1", now - timedelta(days=1))
+    _rated("U0AAA1", "U0CCC1", now)
+    with patch("bot.refresh_names"):
+        html = app.get("/ladder?day=today").data.decode()
+        assert "Sessions · today" in html and "1 session." in html
+        assert "beat</span><span>Cal" in html and "beat</span><span>Bob" not in html
+        html = app.get("/ladder?player=U0BBB1").data.decode()
+        assert "Sessions · Bob" in html and "beat</span><span>Bob" in html
+        assert "beat</span><span>Cal" not in html
+
+
+def test_bad_filter_values_fall_back_to_the_plain_list(app, fake):
+    """A stale or hand-edited link must never echo its junk or 500."""
+    with patch("bot.refresh_names"):
+        html = app.get("/ladder?player=%3Cscript%3E&day=someday").data.decode()
+    assert "Table tennis ladder" in html and "Sessions ·" not in html
+    assert "someday" not in html and "&lt;script&gt;" not in html

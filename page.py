@@ -26,6 +26,8 @@ No external requests: the page renders inside a Vercel function and a strict
 network is assumed, so every style is inline and there are no web fonts.
 """
 import html
+from datetime import datetime
+from urllib.parse import urlencode
 
 import elo
 
@@ -94,6 +96,19 @@ ol.spins::before{content:"";position:absolute;left:1.05rem;top:0;bottom:0;
 .spins .rung{padding:.6rem 0}
 .spins .rating{font-size:1.2rem}
 .spins .move{margin-top:0}
+/* filters: chips in the same hairline style as the placing list, so they read
+   as controls on this table rather than a toolbar from another app. The
+   active chip is filled; nothing else on the page is, so it can't be missed. */
+.filters{display:flex;flex-wrap:wrap;align-items:center;gap:.45rem;margin:0 0 .9rem}
+.filters a,.filters select,.filters input,.filters button{
+  font:inherit;font-size:.88rem;color:#C8DCE1;background:transparent;
+  border:1px solid rgba(234,242,241,.2);padding:.3rem .6rem;text-decoration:none}
+.filters a.on{background:#EAF2F1;color:#0E3A46;border-color:#EAF2F1;font-weight:600}
+.filters select{max-width:12rem}
+.filters input{color-scheme:dark}
+.filters .sep{width:1px;height:1.2rem;background:rgba(234,242,241,.2);margin:0 .2rem}
+.count{margin:0 0 .5rem;color:#9FBEC6;font-size:.85rem}
+.session .when{color:#9FBEC6;font-weight:400;font-size:.85rem;margin-left:auto}
 
 .session{padding:.9rem 0;border-bottom:1px solid rgba(234,242,241,.12)}
 .session:last-of-type{border-bottom:none}
@@ -121,6 +136,8 @@ footer p{margin:.4rem 0}
 
 SCRIPT = f"""
 (function(){{
+  var f = document.getElementById('filters');
+  if (f) f.addEventListener('change', function(){{ f.submit(); }});
   var since = 0, el = document.getElementById('freshness');
   setInterval(function(){{
     since += 5;
@@ -173,10 +190,12 @@ def _streak(player):
 
 
 SPINS_SHOWN = 10
+RECENT_SHOWN = 8       # the default glance
+FILTERED_SHOWN = 50    # once someone has asked for a day or a player, show it
 
 
 def render(players, names, recent, week_delta, week_played, placement_games,
-           channel_hint="", updated="", spins=None, start_spins=0):
+           channel_hint="", updated="", spins=None, start_spins=0, filters=None):
     """The whole page. Pure — every input is passed in, so it renders in a test
     without a database or a Slack client."""
     ranked = sorted(((u, p) for u, p in players.items()
@@ -192,7 +211,7 @@ def render(players, names, recent, week_delta, week_played, placement_games,
     parts.append(_rungs(ranked, names, week_delta, week_played))
     parts.append(_placing(placing, names, placement_games))
     parts.append(_spins(spins or [], names, start_spins))
-    parts.append(_recent(recent, names))
+    parts.append(_recent(recent, names, players, filters or {}))
     parts.append(_footer(placement_games, channel_hint, updated))
 
     body = "\n".join(p for p in parts if p)
@@ -310,11 +329,34 @@ def _spins(spins, names, start_spins):
             '<ol class="spins">' + "".join(rows) + "</ol>")
 
 
-def _recent(recent, names):
-    if not recent:
+DAY_CHIPS = (("", "All"), ("today", "Today"), ("yesterday", "Yesterday"),
+             ("week", "This week"))
+
+
+def _recent(recent, names, players, filters):
+    """The match list, with the player and day filters above it.
+
+    `filters` is {"player": uid, "day": what was asked for, "label": how to say
+    it} — already validated by the caller, so anything here is safe to echo.
+    The filters are plain links and a GET form: they work with no script, and
+    the one line of script merely saves the tap on a Go button.
+    """
+    player = filters.get("player") or ""
+    day = filters.get("day") or ""
+    label = filters.get("label") or ""
+    filtered = bool(player or day)
+    if not recent and not filtered and not players:
         return ""
+
+    heading = "Recent sessions"
+    if filtered:
+        bits = [_e(display_name(player, names))] if player else []
+        if label:
+            bits.append(_e(label))
+        heading = "Sessions · " + " · ".join(bits)
+
     rows = []
-    for blob in recent[:8]:
+    for blob in recent[:FILTERED_SHOWN if filtered else RECENT_SHOWN]:
         a = " & ".join(_e(display_name(u, names)) for u in blob["side_a"])
         b = " & ".join(_e(display_name(u, names)) for u in blob["side_b"])
         ga, gb = blob["games_a"], blob["games_b"]
@@ -325,16 +367,73 @@ def _recent(recent, names):
         else:
             head = f'<span>{b}</span><span class="beat">beat</span><span>{a}</span>'
         score = f'<span class="beat num">{max(ga, gb)}&#8211;{min(ga, gb)}</span>'
+        when = _when(blob.get("applied_at", ""))
         games = "".join(f"<span class='num'>{g[0]}&#8211;{g[1]}</span>"
                         for g in blob["games"])
         deltas = " · ".join(
             f"{_e(display_name(u, names))} "
             f"<span class='num'>{blob['deltas'][u]:+d}</span>"
             for u in blob["side_a"] + blob["side_b"])
-        rows.append(f'<div class="session"><div class="sides">{head}{score}</div>'
+        rows.append(f'<div class="session"><div class="sides">{head}{score}{when}</div>'
                     f'<div class="games">{games}</div>'
                     f'<p class="deltas">{deltas}</p></div>')
-    return "<h2>Recent sessions</h2>" + "".join(rows)
+
+    if filtered:
+        shown = len(rows)
+        if not recent:
+            count = '<p class="count">No sessions match. Try another day, or clear the filters.</p>'
+        elif len(recent) > shown:
+            count = f'<p class="count">{len(recent)} sessions, showing the latest {shown}.</p>'
+        else:
+            count = f'<p class="count">{shown} session{"s" if shown != 1 else ""}.</p>'
+    else:
+        count = ""
+
+    return (f"<h2>{heading}</h2>" + _filter_bar(players, names, player, day)
+            + count + "".join(rows))
+
+
+def _when(iso):
+    """`Tue 16:42` — the day and the clock, enough to place a session without
+    reading a full timestamp. Blank for records too old to carry one."""
+    if not iso:
+        return ""
+    try:
+        when = datetime.fromisoformat(iso)
+    except ValueError:
+        return ""
+    # Day number written by hand: %-d is glibc-only and local dev may be anywhere.
+    return (f'<span class="when num">{when.strftime("%a")} {when.day} '
+            f'{when.strftime("%b, %H:%M")}</span>')
+
+
+def _filter_bar(players, names, player, day):
+    def href(**changes):
+        params = {"player": player, "day": day}
+        params.update(changes)
+        query = urlencode({k: v for k, v in params.items() if v})
+        return "?" + query if query else "?"
+
+    chips = []
+    for value, text in DAY_CHIPS:
+        on = ' class="on"' if (day or "") == value else ""
+        chips.append(f'<a{on} href="{_e(href(day=value))}">{text}</a>')
+
+    options = ['<option value="">Everyone</option>']
+    for uid, _ in sorted(players.items(), key=lambda i: display_name(i[0], names).lower()):
+        sel = " selected" if uid == player else ""
+        options.append(f'<option value="{_e(uid)}"{sel}>{_e(display_name(uid, names))}</option>')
+
+    # A specific date keeps the chips honest: none lights up, the picker does.
+    picked = day if day and day not in dict(DAY_CHIPS) else ""
+    return (
+        '<form id="filters" class="filters" method="get" action="">'
+        f'<select name="player" aria-label="Player">{"".join(options)}</select>'
+        f'<input type="date" name="day" aria-label="Day" value="{_e(picked)}">'
+        '<span class="sep"></span>'
+        + "".join(chips)
+        + '<noscript><button type="submit">Go</button></noscript>'
+        "</form>")
 
 
 def _footer(placement_games, channel_hint, updated):
