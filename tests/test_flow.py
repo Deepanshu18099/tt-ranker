@@ -1192,3 +1192,50 @@ def test_a_name_set_by_an_admin_shows_on_the_ladder(fake, client, admin):
     store.ensure_players([B])
     html = page.render(store.all_players(), store.names(), [], {}, {}, 6)
     assert "Vikash Maddi" in html
+
+
+# --- the public ladder link -----------------------------------------------
+
+def test_the_link_prefers_the_stable_production_domain(monkeypatch):
+    """VERCEL_URL is the per-deployment host and changes on every push, so a
+    link built from it is dead as soon as anyone deploys again."""
+    monkeypatch.delenv("TT_PUBLIC_URL", raising=False)
+    monkeypatch.setenv("VERCEL_URL", "tt-ranker-8ypc8rubm-personalpraneat.vercel.app")
+    monkeypatch.setenv("VERCEL_PROJECT_PRODUCTION_URL", "tt-ranker.vercel.app")
+    assert bot.ladder_url() == "https://tt-ranker.vercel.app/ladder"
+
+
+def test_an_explicit_url_wins(monkeypatch):
+    monkeypatch.setenv("VERCEL_PROJECT_PRODUCTION_URL", "tt-ranker.vercel.app")
+    monkeypatch.setenv("TT_PUBLIC_URL", "https://pingpong.example.com/")
+    assert bot.ladder_url() == "https://pingpong.example.com/ladder"
+
+
+def test_the_deployment_url_is_only_a_last_resort(monkeypatch):
+    monkeypatch.delenv("TT_PUBLIC_URL", raising=False)
+    monkeypatch.delenv("VERCEL_PROJECT_PRODUCTION_URL", raising=False)
+    monkeypatch.setenv("VERCEL_URL", "tt-ranker-abc123.vercel.app")
+    assert bot.ladder_url() == "https://tt-ranker-abc123.vercel.app/ladder"
+
+
+def test_no_link_when_the_deployment_has_no_address(monkeypatch):
+    for var in ("TT_PUBLIC_URL", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"):
+        monkeypatch.delenv(var, raising=False)
+    assert bot.ladder_url() == ""
+
+
+def test_the_pinned_intro_carries_the_link(fake, client, monkeypatch):
+    monkeypatch.setenv("TT_PUBLIC_URL", "https://tt-ranker.vercel.app")
+    run("intro", client)
+    assert "https://tt-ranker.vercel.app/ladder" in said(client.chat_postMessage)
+
+
+def test_the_board_carries_the_link(fake, client, monkeypatch):
+    monkeypatch.setenv("TT_PUBLIC_URL", "https://tt-ranker.vercel.app")
+    assert "https://tt-ranker.vercel.app/ladder" in said(run("board", client))
+
+
+def test_no_dangling_link_text_without_a_url(fake, client, monkeypatch):
+    for var in ("TT_PUBLIC_URL", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"):
+        monkeypatch.delenv(var, raising=False)
+    assert "Live ladder" not in said(run("board", client))

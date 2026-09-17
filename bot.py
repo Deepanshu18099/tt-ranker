@@ -703,8 +703,17 @@ def handle_name(command, respond, client=None, context=None, logger=None):
 
 
 def ladder_url():
-    """Where the public ladder lives, if the deployment knows its own address."""
-    base = os.environ.get("TT_PUBLIC_URL") or os.environ.get("VERCEL_URL", "")
+    """Where the public ladder lives, if the deployment knows its own address.
+
+    Order matters. VERCEL_URL is the *deployment* address — a fresh
+    tt-ranker-8ypc8rubm-… host on every push — so a link built from it is dead
+    the next time anyone deploys, and it may sit behind deployment protection.
+    VERCEL_PROJECT_PRODUCTION_URL is the stable one people should be sent to.
+    TT_PUBLIC_URL overrides both, for a custom domain.
+    """
+    base = (os.environ.get("TT_PUBLIC_URL")
+            or os.environ.get("VERCEL_PROJECT_PRODUCTION_URL")
+            or os.environ.get("VERCEL_URL", ""))
     if not base:
         return ""
     if not base.startswith("http"):
@@ -827,11 +836,13 @@ def handle_intro(command, respond, client, logger=None):
     A command rather than a wiki page so it can never drift from what the bot
     actually does: the thresholds in it are the constants the code runs on.
     """
+    url = ladder_url()
+    text = INTRO + (f"\n\n:link: *Live ladder:* {url}" if url else "")
     try:
-        client.chat_postMessage(channel=command["channel_id"], text=INTRO)
+        client.chat_postMessage(channel=command["channel_id"], text=text)
     except Exception as e:
         (logger or log).warning("intro post failed: %s", e)
-        respond(INTRO)  # at least show the caller
+        respond(text)  # at least show the caller
         return
     respond(":pushpin: Posted — pin it so new players find it "
             "(hover the message → ⋯ → *Pin to channel*).")
@@ -997,7 +1008,9 @@ def board_text(players, limit=BOARD_LIMIT, title="Table tennis ladder"):
 
 
 def handle_board(respond):
-    respond(board_text(store.all_players()))
+    url = ladder_url()
+    respond(board_text(store.all_players())
+            + (f"\n_Live ladder: {url}_" if url else ""))
 
 
 def handle_history(command, respond, bot_id=None):
