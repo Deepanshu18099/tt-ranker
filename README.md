@@ -168,6 +168,11 @@ Playing with varied partners, or any singles at all, collapses it.
 So doubles still counts on the overall board — it's a real result and the whole
 pair earned it — but there's now a board where it can't reach.
 
+The singles board qualifies at **4 games** rather than 6. Singles games are a
+subset of all games, so the same bar leaves the singles board empty while the
+overall one is full — `SINGLES_PLACEMENT_GAMES` in [bot.py](bot.py), to raise
+once volume catches up.
+
 ### Joining
 
 **Anyone who joins `TT_CHANNEL` is put on the ladder automatically** and gets a

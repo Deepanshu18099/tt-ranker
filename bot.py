@@ -51,6 +51,11 @@ HOME_CHANNEL = os.environ.get("TT_CHANNEL", "")
 # first week is worse than a rough one — nobody keeps playing for a board that
 # never shows them. Raise it once there is volume.
 PLACEMENT_GAMES = 6
+# Singles games are a subset of all games, so the same bar leaves the singles
+# board empty while the overall one is full — the emptiest possible version of
+# the leaderboard problem. Its own, lower, for the same reason: a rough board
+# beats no board. Raise it once singles volume catches up.
+SINGLES_PLACEMENT_GAMES = 4
 BOARD_LIMIT = 20
 # Guard on /tt sync: a ladder is a room of people who play each other, and
 # anything past this is someone running it in the wrong channel.
@@ -1035,7 +1040,7 @@ def handle_me(command, respond, bot_id=None):
         lines.append(f"*Singles*  {singles['rating']}  ·  "
                      f"{singles['wins']}-{singles['losses']}  ·  "
                      f"{singles_games} game{'s' if singles_games != 1 else ''}"
-                     + ("" if singles_games >= PLACEMENT_GAMES
+                     + ("" if singles_games >= SINGLES_PLACEMENT_GAMES
                         else "  _(not yet on the singles board)_"))
     if played < PLACEMENT_GAMES:
         left = PLACEMENT_GAMES - played
@@ -1056,22 +1061,25 @@ def _rank_of(uid):
     return None, len(ranked)
 
 
-def ranked_players(players):
+def ranked_players(players, placement=None):
     """[(uid, record)] for everyone past placement, strongest first. Ties break
     on matches played, so the person who has actually shown up ranks higher."""
-    placed = [(u, p) for u, p in players.items() if elo.games_played(p) >= PLACEMENT_GAMES]
+    placement = PLACEMENT_GAMES if placement is None else placement
+    placed = [(u, p) for u, p in players.items() if elo.games_played(p) >= placement]
     return sorted(placed, key=lambda item: (-item[1]["rating"],
                                             -elo.games_played(item[1]), item[0]))
 
 
-def board_text(players, limit=BOARD_LIMIT, title="Table tennis ladder", view=""):
+def board_text(players, limit=BOARD_LIMIT, title="Table tennis ladder", view="",
+               placement=None):
     """The leaderboard, shared by `/tt board`, the singles board and the weekly
     post. `players` is already the right record set — pass singles views in for a
     singles board."""
+    placement = PLACEMENT_GAMES if placement is None else placement
     if not players:
         return (f":table_tennis_paddle_and_ball: *{title}*\n"
                 "_Nobody has registered yet — `/tt register` to start it off._")
-    ranked = ranked_players(players)
+    ranked = ranked_players(players, placement)
     lines = [f":table_tennis_paddle_and_ball: *{title}*"]
     for i, (uid, p) in enumerate(ranked[:limit]):
         badge = MEDALS[i] if i < 3 else f"`{i + 1:>2}.`"
@@ -1080,17 +1088,17 @@ def board_text(players, limit=BOARD_LIMIT, title="Table tennis ladder", view="")
             row += f"  ·  {fmt_streak(p['streak'])}"
         lines.append(row)
     if not ranked:
-        lines.append(f"_No one has played {PLACEMENT_GAMES} games yet._")
+        lines.append(f"_No one has played {placement} games yet._")
     if len(ranked) > limit:
         lines.append(f"_…and {len(ranked) - limit} more._")
 
     placing = sorted(((u, p) for u, p in players.items()
-                      if elo.games_played(p) < PLACEMENT_GAMES),
+                      if elo.games_played(p) < placement),
                      key=lambda item: (-elo.games_played(item[1]), item[0]))
     if placing:
         what = "singles games" if view == "singles" else "games"
         who = ", ".join(f"<@{u}> ({elo.games_played(p)})" for u, p in placing[:10])
-        lines.append(f"\n_Still placing ({PLACEMENT_GAMES} {what} to qualify): {who}_")
+        lines.append(f"\n_Still placing ({placement} {what} to qualify): {who}_")
     if view == "singles":
         lines.append("_Singles only — its own rating, untouched by doubles. "
                      "`/tt board` for everything._")
@@ -1114,8 +1122,8 @@ def handle_board(command, respond):
     wanted = rest.strip().lower()
     players = store.all_players()
     if wanted in SINGLES_WORDS:
-        text = board_text(store.singles_players(players),
-                          title="Singles ladder", view="singles")
+        text = board_text(store.singles_players(players), title="Singles ladder",
+                          view="singles", placement=SINGLES_PLACEMENT_GAMES)
     elif wanted in DOUBLES_WORDS:
         respond(":information_source: There's no doubles-only ladder — a doubles "
                 "result is one number split between two people, so it can't say "

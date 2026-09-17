@@ -170,7 +170,8 @@ def _render_ladder():
         week_delta=week_delta,
         week_played=week_played,
         filters=filters,
-        placement_games=bot.PLACEMENT_GAMES,
+        placement_games=(bot.SINGLES_PLACEMENT_GAMES if view == "singles"
+                         else bot.PLACEMENT_GAMES),
         channel_hint=os.environ.get("TT_CHANNEL_NAME", ""),
         updated=store.now_ist().strftime("%H:%M IST"),
         view=view,

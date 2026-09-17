@@ -219,3 +219,20 @@ def test_weekly_movement_is_hidden_on_the_singles_tab(fake):
     singles = page.render(players, {A: "S"}, [], {A: 25}, {A: 4}, 6, view="singles")
     assert "25 this week" in overall
     assert "this week" not in singles
+
+
+def test_the_singles_board_has_its_own_qualifying_bar(fake):
+    """Singles games are a subset of all games, so the same bar leaves the
+    singles board empty while the overall one is full."""
+    assert bot.SINGLES_PLACEMENT_GAMES < bot.PLACEMENT_GAMES
+    play([A], [B], games=[(21, 14)] * bot.SINGLES_PLACEMENT_GAMES)
+    board = bot.board_text(store.singles_players(store.all_players()),
+                           title="Singles ladder", view="singles",
+                           placement=bot.SINGLES_PLACEMENT_GAMES)
+    assert f"<@{A}>" in board and "No one has played" not in board
+
+
+def test_the_overall_bar_is_untouched(fake):
+    play([A], [B], games=[(21, 14)] * bot.SINGLES_PLACEMENT_GAMES)
+    board = bot.board_text(store.all_players(), view="overall")
+    assert "Still placing" in board          # 4 games is short of the overall 6
