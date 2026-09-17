@@ -57,7 +57,8 @@ Everything is one slash command, `/tt`.
 | `/tt intro` · `/tt intro clear` | Post the how-it-works message · take it down |
 | **`/tt schedule`** · shortcuts menu → *Schedule a table tennis match* | **Opens a form — pick the players and a start time** |
 | `/tt schedule @bob 6pm` | Or type it — `in 30m`, `6pm`, `6:30pm` and `18:30` all work |
-| `/tt book` · `/tt wallet` | Open fixtures · your spins |
+| `/tt book` · `/tt book 6` | Open fixtures · one in full, with every stake |
+| `/tt wallet` | Your spins and recent moves |
 | `/tt help` | All of the above, in Slack |
 
 ### The form
@@ -675,12 +676,19 @@ players may rule on a result.
 splits it in proportion to what they staked.
 
 ```
-Pool: 400 spins
-  Sagnik  300  from 2 people   pays 1.33×
-  Bob     100  from 1 person   pays 4.00×
-
-Bob wins  →  the 100 staked on Bob takes the whole 400.
+💰 11,120 spins in the pot
+danger — 1,120 spins · pays 9.93×
+   Deepanshu 1,020 · Praneat 50 · danger 50
+ChumChum — 10,000 spins · pays 1.11×
+   KK 5,000 · Akchansh 4,000 · Shashank 900 · ChumChum 100
 ```
+
+Backers are **named, not counted**. On a ladder this size who backed you is most
+of the point, and it's also what turns an odd-looking stake into something the
+room notices rather than something only the database knows.
+
+`/tt book 6` gives one fixture in full — every stake and what it would return —
+for once the message has scrolled away.
 
 Nobody is the bookmaker, so **no spin is ever created or destroyed by betting**.
 Everything paid out came from someone else's stake. That's asserted directly:

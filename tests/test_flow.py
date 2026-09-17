@@ -1717,3 +1717,82 @@ def test_each_channel_keeps_its_own_intro(fake, client):
                           MagicMock(), client=client, context={})
     assert store.last_intro("C1") and store.last_intro("C2")
     assert store.last_intro("C1") != store.last_intro("C2")
+
+
+# --- who backed what -------------------------------------------------------
+
+def test_the_fixture_message_names_the_backers(fake, client):
+    """On a small ladder, who backed you is most of the point — and it's what
+    makes an odd-looking stake something the room notices."""
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 1020)
+    back(client, sid, D, "b", 5000)
+    shown = said(client.chat_update)
+    assert f"<@{C}> 1,020" in shown and f"<@{D}> 5,000" in shown
+
+
+def test_backers_are_listed_biggest_first(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 50)
+    back(client, sid, D, "a", 900)
+    line = bot.backers_line(betting.pool(sid), "a")
+    assert line.index(f"<@{D}>") < line.index(f"<@{C}>")
+
+
+def test_a_long_list_of_backers_is_trimmed(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    for i, uid in enumerate([C, D, E, "U0FFF1", "U0GGG1", "U0HHH1", "U0III1",
+                             "U0JJJ1", "U0KKK1", "U0LLL1"]):
+        back(client, sid, uid, "a", 10 + i)
+    line = bot.backers_line(betting.pool(sid), "a")
+    assert line.count("<@") == bot.BACKERS_SHOWN
+    assert "+2 more" in line
+
+
+def test_a_side_with_no_backers_lists_nobody(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 50)
+    assert bot.backers_line(betting.pool(sid), "b") == ""
+
+
+def test_book_with_an_id_gives_one_fixture_in_full(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 1020)
+    back(client, sid, D, "b", 4000)     # a stake above the balance is refused
+
+    shown = said(run(f"book {sid}", client))
+    # sole backer of a side takes the whole pot either way round
+    assert f"<@{C}>  1,020 → *5,020*" in shown
+    assert f"<@{D}>  4,000 → *5,020*" in shown
+    assert "pays" in shown
+
+
+def test_the_detail_view_flags_a_player_backing_their_opponent(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, A, "b", 50)       # A is playing, and backs B
+    back(client, sid, C, "a", 50)
+    shown = said(run(f"book {sid}", client))
+    assert "playing, backed the other side" in shown
+
+
+def test_the_detail_view_marks_a_player_backing_themselves(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, A, "a", 50)
+    shown = said(run(f"book {sid}", client))
+    assert "_playing_" in shown and "backed the other side" not in shown
+
+
+def test_the_detail_view_of_an_untouched_fixture(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    assert "Nobody has staked" in said(run(f"book {fixture_id(client)}", client))
+
+
+def test_asking_about_a_fixture_that_does_not_exist(fake, client):
+    assert "No fixture" in said(run("book 999", client))

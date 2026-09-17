@@ -1456,8 +1456,29 @@ def plain_side(uids):
     return " & ".join(names.get(u) or f"@{u[-4:]}" for u in uids)[:70]
 
 
+BACKERS_SHOWN = 8
+
+
+def backers_line(pot, side, limit=BACKERS_SHOWN):
+    """Who is on a side and for how much, biggest first.
+
+    Named rather than counted: on a small ladder *who* backed you is most of the
+    fun, and it's also what makes an odd-looking bet something the room can
+    notice rather than something only the database knows.
+    """
+    rows = sorted(((uid, amount) for uid, (s, amount) in pot["bets"].items()
+                   if s == side), key=lambda item: (-item[1], item[0]))
+    if not rows:
+        return ""
+    shown = " · ".join(f"<@{uid}> {amount:,}" for uid, amount in rows[:limit])
+    if len(rows) > limit:
+        shown += f"  _+{len(rows) - limit} more_"
+    return shown
+
+
 def pool_line(record, pot=None):
-    """The pot, each side's share, and what a stake returns if it settled now."""
+    """The pot, each side's share, who's on it, and what a stake returns if it
+    settled as it stands."""
     pot = pot or betting.pool(record["id"])
     if not pot["total"]:
         chance_a, chance_b = betting.elo_odds(record)
@@ -1467,11 +1488,12 @@ def pool_line(record, pot=None):
     rows = []
     for side, uids in (("a", record["side_a"]), ("b", record["side_b"])):
         staked = pot[side]
-        backers = pot[f"backers_{side}"]
         ret = betting.projected(pot, side)
         pays = f"pays *{ret:.2f}×*" if ret else "_no takers — pays the lot_"
-        rows.append(f"*{fmt_side(uids)}* — {fmt_spins(staked)} "
-                    f"from {backers} · {pays}")
+        rows.append(f"*{fmt_side(uids)}* — {fmt_spins(staked)} · {pays}")
+        backers = backers_line(pot, side)
+        if backers:
+            rows.append(f"　{backers}")
     return (f":moneybag: *{fmt_spins(pot['total'])}* in the pot\n" + "\n".join(rows))
 
 
@@ -1857,6 +1879,42 @@ def settled_fixture_blocks(record, pot):
                      f"`#{record.get('match_id') or '?'}`")]
 
 
+def fixture_detail(record, caller=None):
+    """One fixture in full: every stake, and what each would return."""
+    pot = betting.pool(record["id"])
+    state = {"open": "betting open", "closed": "betting closed",
+             "settled": "settled", "void": "called off"}.get(record.get("state"), "")
+    lines = [f":date: *{fmt_side(record['side_a'])}* vs *{fmt_side(record['side_b'])}*",
+             f"_Fixture `#{record['id']}` · {fmt_when(record)} · {state}_", ""]
+    if not pot["total"]:
+        lines.append("_Nobody has staked anything yet._")
+        return "\n".join(lines)
+
+    lines.append(f":moneybag: *{fmt_spins(pot['total'])}* in the pot")
+    for side, uids in (("a", record["side_a"]), ("b", record["side_b"])):
+        staked, ret = pot[side], betting.projected(pot, side)
+        lines.append("")
+        lines.append(f"*{fmt_side(uids)}* — {fmt_spins(staked)}"
+                     + (f" · pays *{ret:.2f}×*" if ret else " · _no takers_"))
+        rows = sorted(((u, a) for u, (s, a) in pot["bets"].items() if s == side),
+                      key=lambda i: (-i[1], i[0]))
+        for uid, amount in rows:
+            would = int(amount * pot["total"] / staked) if staked else 0
+            mine = ("a" if uid in record["side_a"]
+                    else "b" if uid in record["side_b"] else None)
+            note = ""
+            if mine and mine != side:
+                note = "  :eyes: _playing, backed the other side_"
+            elif mine:
+                note = "  _playing_"
+            lines.append(f"　<@{uid}>  {amount:,} → *{would:,}*{note}")
+        if not rows:
+            lines.append("　_nobody yet_")
+    if caller:
+        lines.append(f"\n_Your balance: *{fmt_spins(betting.balance(caller))}*._")
+    return "\n".join(lines)
+
+
 def handle_wallet(command, respond):
     uid = command["user_id"]
     betting.ensure_wallets([uid])
@@ -1877,7 +1935,18 @@ def handle_wallet(command, respond):
 
 
 def handle_book(command, respond):
-    """Everything with a betting window open or a result outstanding."""
+    """Everything with a betting window open or a result outstanding.
+    `/tt book 6` gives one fixture in full."""
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    wanted = rest.strip().lstrip("#")
+    if wanted:
+        record = betting.get(wanted)
+        if not record:
+            respond(f":grey_question: No fixture `#{wanted}`.")
+            return
+        betting.close_if_due(record)
+        respond(fixture_detail(record, command.get("user_id")))
+        return
     records = [r for r in betting.live() if r.get("state") in ("open", "closed")]
     for record in records:
         betting.close_if_due(record)
