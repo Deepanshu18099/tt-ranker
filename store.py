@@ -48,13 +48,13 @@ INT_FIELDS = ("rating", "matches", "wins", "losses", "draws", "games_won",
               "best_streak")
 TEXT_FIELDS = ("last_played", "last_match")
 
-# A second, parallel Elo fed only by singles. A doubles result is one number
-# split between two people, so a player who only ever partners the same person
-# has a rating the maths cannot pin down — only the pair's total is determined.
-# Singles has no such hole, so it gets its own rating rather than a filtered view
-# of the overall one, which would still be carrying doubles in its history.
+# Parallel Elos, one per format, alongside the overall one. Each is fed only by
+# its own matches and rated off its own ratings — not the overall number with the
+# other format filtered out, which would still be carrying that format in the
+# history that produced it.
 SINGLES = "s_"
-SINGLES_FIELDS = tuple(SINGLES + f for f in INT_FIELDS + TEXT_FIELDS)
+DOUBLES = "d_"
+SPLITS = (SINGLES, DOUBLES)
 
 
 def player_key(uid):
@@ -98,49 +98,71 @@ def new_player(now=None):
               "points_lost": 0, "peak": elo.START_RATING, "streak": 0,
               "best_streak": 0, "joined": stamp(now), "last_played": "",
               "last_match": ""}
-    for field in INT_FIELDS + TEXT_FIELDS:
-        record[SINGLES + field] = record[field]
+    for prefix in SPLITS:
+        for field in INT_FIELDS + TEXT_FIELDS:
+            record[prefix + field] = record[field]
     return record
 
 
 def _coerce(raw):
     """Redis hands everything back as a string; put the numbers back.
 
-    A record written before singles existed has no s_ fields, so the singles
-    rating and peak default to the opening rating rather than to zero — a player
-    who has never played singles sits at the start line, not at the bottom.
+    A record written before a format had its own ladder has none of that
+    format's fields, so they fall back to _blank().
     """
     out = dict(raw)
     for field in INT_FIELDS:
-        for key, blank in ((field, 0),
-                           (SINGLES + field,
-                            elo.START_RATING if field in ("rating", "peak") else 0)):
+        keys = [(field, 0)] + [(p + field, _blank(field)) for p in SPLITS]
+        for key, blank in keys:
             try:
                 out[key] = int(out.get(key, blank))
             except (TypeError, ValueError):
                 out[key] = blank
     for field in TEXT_FIELDS:
-        out.setdefault(SINGLES + field, "")
+        for prefix in SPLITS:
+            out.setdefault(prefix + field, "")
     return out
 
 
-def singles_view(player):
-    """A player's singles-only record, shaped exactly like a normal one.
+def _blank(field):
+    """What a field reads as before that format has been played. Rating and peak
+    start at the opening rating, not at zero — someone who has never played
+    doubles is at the start line, not bottom of a board they never entered."""
+    if field in ("rating", "peak"):
+        return elo.START_RATING
+    return "" if field in TEXT_FIELDS else 0
+
+
+def split_view(player, prefix):
+    """One format's record, shaped exactly like a normal one.
 
     Same field names, so every piece of display and ranking code works on it
-    unchanged instead of growing a parallel set of accessors.
+    unchanged instead of growing a parallel set of accessors per format.
     """
     view = dict(player)
     for field in INT_FIELDS + TEXT_FIELDS:
-        blank = elo.START_RATING if field in ("rating", "peak") else (
-            "" if field in TEXT_FIELDS else 0)
-        view[field] = player.get(SINGLES + field, blank)
+        view[field] = player.get(prefix + field, _blank(field))
     return view
 
 
+def singles_view(player):
+    return split_view(player, SINGLES)
+
+
+def doubles_view(player):
+    return split_view(player, DOUBLES)
+
+
+def split_players(players, prefix):
+    return {uid: split_view(p, prefix) for uid, p in players.items()}
+
+
 def singles_players(players):
-    """{uid: singles record} for a whole ladder."""
-    return {uid: singles_view(p) for uid, p in players.items()}
+    return split_players(players, SINGLES)
+
+
+def doubles_players(players):
+    return split_players(players, DOUBLES)
 
 
 def get_players(uids):
@@ -329,24 +351,23 @@ def apply_match(record, confirmed_by=None, auto=False, admin=False, now=None):
     mid = record["id"]
     wk = week_key(now)
 
-    # Singles carries its own Elo, rated off its own ratings — not a copy of the
-    # overall number with doubles filtered out, which would still have doubles in
-    # the history that produced it.
-    singles = None
-    if not rated["doubles"]:
-        def singles_entries(side):
-            return [{"uid": u, "rating": singles_view(players[u])["rating"],
-                     "games": elo.games_played(singles_view(players[u]))} for u in side]
-        singles = elo.rate_match(singles_entries(side_a), singles_entries(side_b),
-                                 record["games"])
+    # The format's own Elo, rated off its own ratings.
+    split_prefix = DOUBLES if rated["doubles"] else SINGLES
+
+    def split_entries(side):
+        return [{"uid": u, "rating": split_view(players[u], split_prefix)["rating"],
+                 "games": elo.games_played(split_view(players[u], split_prefix))}
+                for u in side]
+
+    split = elo.rate_match(split_entries(side_a), split_entries(side_b),
+                           record["games"])
 
     writes = []
     for side, mine, theirs in ((side_a, "a", "b"), (side_b, "b", "a")):
         for uid in side:
             updated = _advance(players[uid], rated, mine, theirs, uid, mid, now)
-            if singles:
-                updated.update(_advance_singles(players[uid], singles, mine, theirs,
-                                                uid, mid, now))
+            updated.update(_advance_split(players[uid], split, mine, theirs,
+                                          uid, mid, now, split_prefix))
             writes.append(["HSET", player_key(uid)] + _flatten(updated))
             writes.append(["LPUSH", player_history_key(uid), mid])
             writes.append(["LTRIM", player_history_key(uid), 0, PLAYER_HISTORY_LIMIT - 1])
@@ -356,7 +377,10 @@ def apply_match(record, confirmed_by=None, auto=False, admin=False, now=None):
     blob = dict(record)
     blob.update(rated)
     blob.update({
-        "singles_rated": singles or {},
+        "split_rated": split, "split_prefix": split_prefix,
+        # Kept under its old name too: matches stored before doubles got its own
+        # ladder carry singles_rated, and /tt history reads it.
+        "singles_rated": split if split_prefix == SINGLES else {},
         "confirmed_by": confirmed_by or "", "auto_confirmed": bool(auto),
         # Recorded so the message can say a confirmation was skipped, rather
         # than an admin result being indistinguishable from an agreed one.
@@ -374,10 +398,10 @@ def apply_match(record, confirmed_by=None, auto=False, admin=False, now=None):
     return blob
 
 
-def _advance_singles(player, rated, mine, theirs, uid, mid, now):
-    """The same step applied to the singles record, re-prefixed on the way out."""
-    advanced = _advance(singles_view(player), rated, mine, theirs, uid, mid, now)
-    return {SINGLES + f: advanced[f] for f in INT_FIELDS + TEXT_FIELDS}
+def _advance_split(player, rated, mine, theirs, uid, mid, now, prefix):
+    """The same step applied to one format's record, re-prefixed on the way out."""
+    advanced = _advance(split_view(player, prefix), rated, mine, theirs, uid, mid, now)
+    return {prefix + f: advanced[f] for f in INT_FIELDS + TEXT_FIELDS}
 
 
 def _advance(player, rated, mine, theirs, uid, mid, now):

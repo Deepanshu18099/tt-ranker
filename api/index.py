@@ -165,15 +165,19 @@ def _render_ladder():
         view = ""
     week_delta, week_played = store.week_movement()
     recent, filters = _filtered_matches(players)
+    # Each tab gets its own record set; page.render can't tell them apart,
+    # which is what shaping a per-format record like an ordinary one buys.
+    shown = {"": store.singles_players, "doubles": store.doubles_players}
     body = page.render(
-        players=players if view == "overall" else store.singles_players(players),
+        players=shown[view](players) if view in shown else players,
         names=store.names(),
         recent=recent,
         week_delta=week_delta,
         week_played=week_played,
         filters=filters,
-        placement_games=(bot.PLACEMENT_GAMES if view == "overall"
-                         else bot.SINGLES_PLACEMENT_GAMES),
+        placement_games={"": bot.SINGLES_PLACEMENT_GAMES,
+                         "doubles": bot.DOUBLES_PLACEMENT_GAMES,
+                         "overall": bot.PLACEMENT_GAMES}[view],
         channel_hint=os.environ.get("TT_CHANNEL_NAME", ""),
         updated=store.now_ist().strftime("%H:%M IST"),
         view=view,

@@ -167,11 +167,7 @@ def test_the_ways_to_ask_for_singles(fake, word, monkeypatch):
     assert "Singles ladder" in said(respond)
 
 
-def test_asking_for_a_doubles_board_explains_why_there_isnt_one(fake):
-    from unittest.mock import MagicMock
-    respond = MagicMock()
-    bot.handle_board(command("board doubles"), respond)
-    assert "can't say who did what" in said(respond)
+# Doubles has a board of its own now; tests/test_doubles.py covers it.
 
 
 def test_the_card_shows_both_ratings_once_singles_have_been_played(fake):

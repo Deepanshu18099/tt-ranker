@@ -76,17 +76,18 @@ def replay(blobs):
         except (KeyError, ValueError):
             applied = store.now_ist()
 
-        # Singles carries its own Elo, so it is replayed on its own ratings
+        # Each format carries its own Elo, so it is replayed on its own ratings
         # rather than derived from the overall pass.
-        singles = None
-        if not rated["doubles"]:
-            def singles_entries(side):
-                return [{"uid": u,
-                         "rating": store.singles_view(state[u])["rating"],
-                         "games": elo.games_played(store.singles_view(state[u]))}
-                        for u in side]
-            singles = elo.rate_match(singles_entries(blob["side_a"]),
-                                     singles_entries(blob["side_b"]), blob["games"])
+        prefix = store.DOUBLES if rated["doubles"] else store.SINGLES
+
+        def split_entries(side):
+            return [{"uid": u,
+                     "rating": store.split_view(state[u], prefix)["rating"],
+                     "games": elo.games_played(store.split_view(state[u], prefix))}
+                    for u in side]
+
+        split = elo.rate_match(split_entries(blob["side_a"]),
+                               split_entries(blob["side_b"]), blob["games"])
 
         snapshot = {uid: dict(state[uid]) for uid in uids}
         for side, mine, theirs in ((blob["side_a"], "a", "b"),
@@ -94,9 +95,8 @@ def replay(blobs):
             for uid in side:
                 advanced = store._advance(state[uid], rated, mine, theirs, uid,
                                           blob["id"], applied)
-                if singles:
-                    advanced.update(store._advance_singles(
-                        state[uid], singles, mine, theirs, uid, blob["id"], applied))
+                advanced.update(store._advance_split(
+                    state[uid], split, mine, theirs, uid, blob["id"], applied, prefix))
                 state[uid] = advanced
 
         week = store.week_key(applied)
@@ -107,7 +107,9 @@ def replay(blobs):
 
         fresh = dict(blob)
         fresh.update(rated)
-        fresh["singles_rated"] = singles or {}
+        fresh["split_rated"] = split
+        fresh["split_prefix"] = prefix
+        fresh["singles_rated"] = split if prefix == store.SINGLES else {}
         fresh["snapshot"] = snapshot
         fresh["week"] = week
         rewritten.append(fresh)
@@ -138,15 +140,16 @@ def main(argv):
     before = store.get_players(list(state))
     names = store.names()
 
-    print(f"  {'player':<22}{'now':>7}{'after':>8}{'move':>7}{'singles':>9}")
+    print(f"  {'player':<22}{'now':>7}{'after':>8}{'move':>7}{'singles':>9}{'doubles':>9}")
     for uid, player in sorted(state.items(), key=lambda i: -i[1]["rating"]):
         was = (before.get(uid) or {}).get("rating", elo.START_RATING)
         shift = player["rating"] - was
         name = names.get(uid) or f"@{uid[-4:]}"
-        singles = store.singles_view(player)
-        played = elo.games_played(singles)
-        col = f"{singles['rating']}" if played else "—"
-        print(f"  {name:<22}{was:>7}{player['rating']:>8}{shift:>+7}{col:>9}")
+        cols = []
+        for view in (store.singles_view(player), store.doubles_view(player)):
+            cols.append(f"{view['rating']}" if elo.games_played(view) else "—")
+        print(f"  {name:<22}{was:>7}{player['rating']:>8}{shift:>+7}"
+              f"{cols[0]:>9}{cols[1]:>9}")
 
     changed = sum(1 for uid, p in state.items()
                   if p["rating"] != (before.get(uid) or {}).get("rating", elo.START_RATING))

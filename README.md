@@ -44,7 +44,7 @@ Everything is one slash command, `/tt`.
 | `/tt log @bob 11-7 9-11 11-5` | Log singles — you against Bob, any number of games |
 | `/tt log @partner vs @dan @eve 11-7 11-9` | Doubles. `vs` splits the sides |
 | `/tt log @ann @bob vs @cal @dee 11-7 11-9` | Record a session you weren't in |
-| `/tt board` · `/tt board singles` | The ladder · singles only |
+| `/tt board` · `/tt board singles` · `/tt board doubles` | The ladder · one format only |
 | `/tt me` · `/tt me @bob` | One player's card — rating, record, streak, peak |
 | `/tt history` · `/tt history @bob` | Recent results |
 | `/tt pending` | Sessions still waiting on confirmation |
@@ -95,7 +95,8 @@ started from `/tt log` it already knows.
 └───────────────────────────────────────────┘
 ```
 
-There's no singles/doubles switch — one name a side is singles, two is doubles.
+There's no singles/doubles switch — one name a side is singles, two is doubles,
+and each goes to its own board as well as the overall one.
 Mistakes come back attached to the field that's wrong, so a typo is one
 correction rather than retyping the whole thing. Both routes run the same
 validation and end at the same confirmation prompt.
@@ -147,34 +148,41 @@ session — the only way to clear one whose players have gone quiet, short of
 waiting for the daily sweep. The result still says *recorded by @them* 🛡, so
 skipping the confirmation is visible to the channel rather than silent.
 
-### Two ladders
+### Three ladders
 
-`/tt board` counts everything. **`/tt board singles`** counts only singles, and
-the ladder page has a tab for each — **Singles is the one it opens on**, with
-`?view=overall` for everything. (Links pasted before that flip, `?view=singles`,
-still work.)
+| Board | Slack | Web |
+|---|---|---|
+| Singles | `/tt board singles` | the tab it opens on |
+| Doubles | `/tt board doubles` | `?view=doubles` |
+| Overall | `/tt board` | `?view=overall` |
 
-Singles gets its **own Elo**, not the overall rating with doubles filtered out —
-the history that produced the overall number still has doubles in it. The two
-are updated side by side: a singles result moves both, a doubles result moves
-only the overall one.
+**Singles is the one it opens on.** (Links pasted before that flip,
+`?view=singles`, still work.)
 
-The reason is worth stating, because it's structural rather than a preference. A
-doubles result is **one number split between two people**. Both partners move by
-the same amount, so the maths never learns who did what — and for someone who
-only ever partners the same person, only the *pair's total* is determined, never
-the split. Simulated against the real `elo.py`, a true-700 player who always
-partners a 1300 settles around **910**, while their partner is dragged down to
-**1210**. It isn't points from nowhere; it's a transfer from the stronger player.
-Playing with varied partners, or any singles at all, collapses it.
+Each board has its **own Elo**, not the overall rating with the other format
+filtered out — the history that produced the overall number still has the other
+format in it. They are updated side by side: every result moves the overall
+rating and exactly one of the two format ratings, and each is rated off its own
+ratings, so a singles result is judged against your singles standing and a
+doubles result against your doubles one.
 
-So doubles still counts on the overall board — it's a real result and the whole
-pair earned it — but there's now a board where it can't reach.
+**Doubles is a narrower claim than singles, and the tab says so.** A doubles
+result is **one number split between two people**. Both partners move by the
+same amount, so what the maths actually pins down is the *pair's* combined
+rating; the split between the two is never separately measured. Simulated
+against the real `elo.py`, a true-700 player who always partners a 1300 settles
+around **910**, while their partner is dragged down to **1210** — not points
+from nowhere, a transfer from the stronger player. Play with varied partners and
+it settles close to the truth; always partner the same person and the two of you
+drift together, high or low, with nothing able to separate you.
 
-The singles board qualifies at **4 games** rather than 6. Singles games are a
-subset of all games, so the same bar leaves the singles board empty while the
-overall one is full — `SINGLES_PLACEMENT_GAMES` in [bot.py](bot.py), to raise
-once volume catches up.
+So read the doubles board as *how the teams you play on do*. Singles is the
+board that can tell two people apart, which is why it's the one that opens.
+
+Both format boards qualify at **4 games** rather than 6. Each format's games are
+a subset of all games, so the same bar would leave them empty while the overall
+one is full — `SINGLES_PLACEMENT_GAMES` and `DOUBLES_PLACEMENT_GAMES` in
+[bot.py](bot.py), to raise once volume catches up.
 
 ### Joining
 

@@ -199,9 +199,26 @@ def _streak(player):
 
 # Singles first, and first means default: it is the honest ladder, since a
 # doubles result is one number split between two people and can't say who did
-# what. "" is singles; ?view=overall is everything. The old ?view=singles links
-# still resolve here — the route folds them onto "".
-VIEWS = (("", "Singles"), ("overall", "Overall"))
+# what. "" is singles; the others are named. The old ?view=singles links still
+# resolve here — the route folds them onto "".
+VIEWS = (("", "Singles"), ("doubles", "Doubles"), ("overall", "Overall"))
+
+# What each tab is, said plainly at the top of it. The doubles note carries its
+# caveat rather than leaving people to assume the number means what the singles
+# one means.
+NOTES = {
+    "": ("Singles only, on its own rating — no doubles result has ever touched "
+         "these numbers. A doubles result is one figure split between two "
+         "people, so it can say how a pair did but not who did what."),
+    "doubles": ("Doubles only, on its own rating. Read it as how the teams you "
+                "play on do, not as your own level: a doubles result moves both "
+                "partners by the same amount, so only a pair's combined rating "
+                "is really measured — the split between the two is a guess the "
+                "maths cannot check. Play with varied partners and it settles "
+                "close to the truth; always partner the same person and the two "
+                "of you drift together, high or low, with nothing to separate "
+                "you. Singles is the tab that can."),
+}
 SPINS_SHOWN = 10
 RECENT_SHOWN = 8       # the default glance
 FILTERED_SHOWN = 50    # once someone has asked for a day or a player, show it
@@ -224,10 +241,11 @@ def render(players, names, recent, week_delta, week_played, placement_games,
     without a database or a Slack client.
 
     `players` is whichever record set the view wants: pass singles views in for
-    the singles tab. The ranking and rendering below don't know the difference,
-    which is the point of shaping a singles record like an ordinary one.
+    the singles tab, doubles views for the doubles one. The ranking and rendering
+    below don't know the difference, which is the point of shaping a per-format
+    record like an ordinary one.
     """
-    singles = view != "overall"
+    overall = view == "overall"
     ranked = sorted(((u, p) for u, p in players.items()
                      if elo.games_played(p) >= placement_games),
                     key=lambda i: (-i[1]["rating"], -elo.games_played(i[1]), i[0]))
@@ -238,17 +256,14 @@ def render(players, names, recent, week_delta, week_played, placement_games,
     parts = ['<h1>Table tennis ladder</h1>']
     parts.append(f'<p class="sub">{_headline(players, ranked, placing, names, placement_games)}</p>')
     parts.append(_tabs(view))
-    if singles:
-        parts.append('<p class="note">Singles only, on its own rating — no '
-                     'doubles result has ever touched these numbers. A doubles '
-                     'result is one figure split between two people, so it can '
-                     "say how a pair did but not who did what.</p>")
+    if NOTES.get(view):
+        parts.append(f'<p class="note">{NOTES[view]}</p>')
     parts.append(_lead(ranked, placing, names, week_delta, placement_games))
-    parts.append(_rungs(ranked, names, None if singles else week_delta, week_played))
+    parts.append(_rungs(ranked, names, week_delta if overall else None, week_played))
     parts.append(_placing(placing, names, placement_games))
-    # Overall tab only: a spins table is neither singles nor doubles, and the
-    # singles view is there to be one thing.
-    if not singles:
+    # Overall tab only: a spins table belongs to no single format, and a format
+    # tab is there to be one thing.
+    if overall:
         parts.append(_spins(spins or [], names, start_spins, circulating))
     parts.append(_recent(recent, names, players, filters or {}))
     parts.append(_footer(placement_games, channel_hint, updated))
@@ -310,7 +325,7 @@ def _lead(ranked, placing, names, week_delta, placement_games):
 
 def _rungs(ranked, names, week_delta, week_played):
     """week_delta of None means "don't show movement" — the weekly figures count
-    every game, so they would be a lie next to a singles-only rating."""
+    every game, so they would be a lie next to a one-format rating."""
     if not ranked:
         return ""
     rows = []

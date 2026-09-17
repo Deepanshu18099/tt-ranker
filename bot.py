@@ -56,6 +56,7 @@ PLACEMENT_GAMES = 6
 # the leaderboard problem. Its own, lower, for the same reason: a rough board
 # beats no board. Raise it once singles volume catches up.
 SINGLES_PLACEMENT_GAMES = 4
+DOUBLES_PLACEMENT_GAMES = 4
 BOARD_LIMIT = 20
 # Guard on /tt sync: a ladder is a room of people who play each other, and
 # anything past this is someone running it in the wrong channel.
@@ -1122,6 +1123,8 @@ def handle_me(command, respond, bot_id=None):
     rank, total = _rank_of(uid)
     singles = store.singles_view(player)
     singles_games = elo.games_played(singles)
+    doubles = store.doubles_view(player)
+    doubles_games = elo.games_played(doubles)
     lines = [
         f":table_tennis_paddle_and_ball: *<@{uid}>* — *{player['rating']}*"
         + (f"   ·   #{rank} of {total}" if rank else "   ·   _still placing_"),
@@ -1138,6 +1141,12 @@ def handle_me(command, respond, bot_id=None):
                      f"{singles_games} game{'s' if singles_games != 1 else ''}"
                      + ("" if singles_games >= SINGLES_PLACEMENT_GAMES
                         else "  _(not yet on the singles board)_"))
+    if doubles_games:
+        lines.append(f"*Doubles*  {doubles['rating']}  ·  "
+                     f"{doubles['wins']}-{doubles['losses']}  ·  "
+                     f"{doubles_games} game{'s' if doubles_games != 1 else ''}"
+                     + ("" if doubles_games >= DOUBLES_PLACEMENT_GAMES
+                        else "  _(not yet on the doubles board)_"))
     if played < PLACEMENT_GAMES:
         left = PLACEMENT_GAMES - played
         lines.append(f"_{left} more game{'s' if left > 1 else ''} to join the ladder._")
@@ -1192,15 +1201,20 @@ def board_text(players, limit=BOARD_LIMIT, title="Table tennis ladder", view="",
                       if elo.games_played(p) < placement),
                      key=lambda item: (-elo.games_played(item[1]), item[0]))
     if placing:
-        what = "singles games" if view == "singles" else "games"
+        what = f"{view} games" if view in ("singles", "doubles") else "games"
         who = ", ".join(f"<@{u}> ({elo.games_played(p)})" for u, p in placing[:10])
         lines.append(f"\n_Still placing ({placement} {what} to qualify): {who}_")
     if view == "singles":
         lines.append("_Singles only — its own rating, untouched by doubles. "
                      "`/tt board` for everything._")
+    elif view == "doubles":
+        lines.append("_Doubles only, on its own rating — how your teams do, not "
+                     "how you do: both partners move by the same amount, so the "
+                     "pair is what's really measured. `/tt board singles` is the "
+                     "one that can tell you apart._")
     elif view == "overall":
-        lines.append("_Singles and doubles together. `/tt board singles` for "
-                     "singles only._")
+        lines.append("_Singles and doubles together. `/tt board singles` or "
+                     "`/tt board doubles` for one format._")
     return "\n".join(lines)
 
 
@@ -1209,10 +1223,10 @@ DOUBLES_WORDS = ("doubles", "double", "2v2", "pairs")
 
 
 def handle_board(command, respond):
-    """`/tt board` — everything. `/tt board singles` — singles only.
+    """`/tt board` — everything. `/tt board singles|doubles` — one format.
 
-    Two ladders rather than one filtered view: the singles board is fed by its
-    own Elo, so a doubles result has never touched the numbers on it.
+    Separate ladders rather than filtered views: each format is fed by its own
+    Elo, so nothing from the other format has touched the numbers on it.
     """
     _, rest = parsing.split_subcommand(command.get("text", ""))
     wanted = rest.strip().lower()
@@ -1221,11 +1235,8 @@ def handle_board(command, respond):
         text = board_text(store.singles_players(players), title="Singles ladder",
                           view="singles", placement=SINGLES_PLACEMENT_GAMES)
     elif wanted in DOUBLES_WORDS:
-        respond(":information_source: There's no doubles-only ladder — a doubles "
-                "result is one number split between two people, so it can't say "
-                "who did what. `/tt board` counts everything, `/tt board singles` "
-                "only singles.")
-        return
+        text = board_text(store.doubles_players(players), title="Doubles ladder",
+                          view="doubles", placement=DOUBLES_PLACEMENT_GAMES)
     else:
         text = board_text(players, view="overall")
     url = ladder_url()
@@ -1390,7 +1401,7 @@ no fixed length. The other side confirms it, then ratings move. Unconfirmed \
 results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 
 *Everything else*
-• `/tt board` — the ladder    • `/tt board singles` — singles only
+• `/tt board` — the ladder    • `/tt board singles` / `doubles` — one format
 • `/tt me [@player]` — one player's card
 • `/tt history [@player] [today|yesterday|week|date]` — results, filtered
 • `/tt pending` — awaiting confirmation
