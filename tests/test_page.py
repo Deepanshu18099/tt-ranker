@@ -96,16 +96,19 @@ def test_only_qualified_players_are_ranked():
 def test_this_weeks_movement_is_shown_next_to_the_rating():
     """The page's whole job is answering 'did I move?'"""
     html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "Sagnik"}, delta={"U1": 13})
-    assert "13 this week" in html
+    assert "13 this week" in html and 'class="move up"' in html
     html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "Sagnik"}, delta={"U1": -8})
-    assert "8 this week" in html
-    html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "Sagnik"})
+    assert "8 this week" in html and 'class="move down"' in html
+    html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "Sagnik"}, played={"U1": 2})
     assert "level this week" in html
 
 
-def test_someone_who_played_this_week_is_marked():
-    html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "Sagnik"}, played={"U1": 3})
-    assert 'class="name hot"' in html
+def test_playing_and_breaking_even_is_not_the_same_as_not_playing():
+    """They used to render identically, which made "level" unreadable."""
+    even = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "S"}, played={"U1": 3})
+    absent = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "S"})
+    assert "level this week" in even
+    assert "no games this week" in absent
 
 
 # --- recent sessions -------------------------------------------------------
@@ -140,3 +143,12 @@ def test_the_page_refreshes_itself_only_while_being_looked_at():
     """Reloading a backgrounded tab every minute is traffic nobody reads."""
     html = render()
     assert "visibilityState" in html and "location.reload()" in html
+
+
+def test_gains_are_green_and_losses_red():
+    """Convention, reinforcing the triangles — never the only signal, since the
+    glyphs say the same thing without colour."""
+    up = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "S"}, delta={"U1": 13})
+    down = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "S"}, delta={"U1": -13})
+    assert "&#9650;" in up and "&#9660;" in down
+    assert ".up{color:#3FCB86}" in up and ".down{color:#FF7A70}" in down

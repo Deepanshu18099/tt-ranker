@@ -8,11 +8,12 @@ and the person reading can find their own row without scrolling past a hero.
 
 Design notes, so later edits don't drift:
 
-  The palette is the table. A table tennis table is a deep blue-green with one
-  white centre line, and the ITTF requires a paddle to be red on one face and
-  black on the other — a colour pairing that belongs to this sport and almost
-  nothing else. Red marks a rating that went up; the orange of the ball marks
-  something that just happened. There is no second bright colour.
+  The ground is the table: a deep blue-green with one white centre line. Colour
+  beyond that is spent only on the two things a reader is looking for — green
+  for a rating that went up, red for one that went down. That is convention
+  rather than invention, and convention is right here: nobody glancing at their
+  own row should have to decode a palette. The triangles say the same thing, so
+  colour is never the only signal.
 
   The structure is the ladder. Rungs are hairlines, not cards, and the rank
   numbers sit on a vertical line that runs the length of the list the way the
@@ -71,9 +72,10 @@ ol.ladder::before{content:"";position:absolute;left:1.05rem;top:0;bottom:0;
 .score{grid-column:3;text-align:right;white-space:nowrap}
 .rating{font-size:1.5rem;font-weight:600}
 .move{display:block;margin-top:.1rem;font-size:.82rem;color:#9FBEC6}
-.up{color:#E2554D}
-.hot::after{content:"";display:inline-block;width:.42rem;height:.42rem;
-  margin-left:.45rem;border-radius:50%;background:#F6903A;vertical-align:.08em}
+/* Green up, red down — the convention people read without thinking. The
+   triangles carry the same meaning, so colour is never the only signal. */
+.up{color:#3FCB86}
+.down{color:#FF7A70}
 
 h2{margin:2.75rem 0 .35rem;font-size:1.05rem;font-weight:650;letter-spacing:-.01em}
 .note{margin:0 0 .9rem;color:#9FBEC6;font-size:.9rem;max-width:34rem}
@@ -139,12 +141,16 @@ def _record(player):
     return f"{out} · {player['games_won']} of {games} games"
 
 
-def _movement(delta):
+def _movement(delta, played=0):
+    """"Level" and "didn't play" are different facts that used to look
+    identical. Saying which in words beats a coloured dot competing with red."""
+    if not played and not delta:
+        return '<span class="move">no games this week</span>'
     if not delta:
         return '<span class="move">level this week</span>'
     if delta > 0:
         return f'<span class="move up">&#9650; {delta} this week</span>'
-    return f'<span class="move">&#9660; {abs(delta)} this week</span>'
+    return f'<span class="move down">&#9660; {abs(delta)} this week</span>'
 
 
 def _streak(player):
@@ -235,14 +241,13 @@ def _rungs(ranked, names, week_delta, week_played):
         return ""
     rows = []
     for i, (uid, player) in enumerate(ranked, start=1):
-        hot = " hot" if week_played.get(uid) else ""
         rows.append(
             '<li class="rung">'
             f'<span class="rank num{" top" if i == 1 else ""}">{i}</span>'
-            f'<span class="who"><span class="name{hot}">{_e(display_name(uid, names))}</span>'
+            f'<span class="who"><span class="name">{_e(display_name(uid, names))}</span>'
             f'<span class="form">{_e(_record(player))}{_e(_streak(player))}</span></span>'
             f'<span class="score"><span class="rating num">{player["rating"]}</span>'
-            f'{_movement(week_delta.get(uid, 0))}</span>'
+            f'{_movement(week_delta.get(uid, 0), week_played.get(uid, 0))}</span>'
             "</li>")
     return '<ol class="ladder">' + "".join(rows) + "</ol>"
 
