@@ -304,6 +304,15 @@ def test_losing_a_skunk_costs_the_most():
     assert gain(P("a"), P("b"), [(0, 11)]) < gain(P("a"), P("b"), [(13, 21)]) < 0
 
 
+def test_the_two_spellings_of_a_skunk_rate_identically():
+    """21-0 is a mis-logged 11-0, and parsing folds it onto one. Even unfolded
+    it rates the same, because the margin is read relative to the game being
+    played and both rescale to 11 — which is what makes the fold a
+    record-keeping fix rather than a scoring change."""
+    assert gain(P("a"), P("b"), [(21, 0)]) == gain(P("a"), P("b"), [(11, 0)])
+    assert elo.mov_multiplier(21, 21) == elo.mov_multiplier(11, 11)
+
+
 def test_a_skunk_still_conserves_the_pool():
     r = rate(P("a", 1200), P("b", 900), [(11, 0)])
     assert sum(r["deltas"].values()) == 0

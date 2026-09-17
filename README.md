@@ -107,10 +107,18 @@ games won 2–1. There's no fixed session length — log two games or twenty, up
 session. `11 - 7`, `11:7` and `11–7` are all read the same way. The word `log`
 is optional once you know the bot — `/tt @bob 11-7` works.
 
-**Skunked?** If your house rule ends a game at 11-0, log it as `11-0`. It scores
+**Skunked?** The house rule ends a game at 11-0, so log it as `11-0`. It scores
 as the most decisive result there is — a single skunk is worth about double a
 normal win, because its winning score marks it as a *finished* game-to-11
 whitewash rather than a half-played game to 21.
+
+Log it as `21-0` — the number you play to rather than the number on the table
+when it stopped — and it's **recorded as `11-0`**. The rating is identical
+either way, because the margin is read relative to the game being played and
+`21-0` and `11-0` both rescale to the same 11. What the fold-in protects is the
+*record*: without it, a skunk would put ten points into your points total that
+nobody ever played. Any `X-0` past 11 folds the same way; `21-1` doesn't — the
+opponent scored, so the game ran its length.
 
 ### Confirming
 

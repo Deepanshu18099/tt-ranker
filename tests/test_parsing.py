@@ -229,3 +229,34 @@ def test_the_day_can_sit_anywhere_in_the_command():
 
 def test_a_score_is_never_mistaken_for_a_date():
     assert parsing.split_day("<@U1> 11-7 9-11") == ("", "<@U1> 11-7 9-11")
+
+
+# --- a mis-logged skunk ----------------------------------------------------
+
+def test_a_skunk_logged_as_21_0_is_recorded_as_11_0():
+    """The house rule ends the game at 11-0, so a 21-0 is the number they play
+    to, not the number on the table. Recording it verbatim would bank ten points
+    nobody played."""
+    assert parse(f"{m(BOB)} 21-0")["games"] == [(11, 0)]
+    assert parsing.parse_games("21-0") == [(11, 0)]
+
+
+def test_it_folds_either_way_round():
+    assert parse(f"{m(BOB)} 0-21")["games"] == [(0, 11)]
+
+
+@pytest.mark.parametrize("score,expected", [
+    ((11, 0), (11, 0)),     # already the skunk score
+    ((12, 0), (11, 0)),     # any zero-score game past 11 stopped at 11
+    ((21, 0), (11, 0)),
+    ((21, 1), (21, 1)),     # they scored, so the game ran its length
+    ((7, 0), (7, 0)),       # first-to-7: it ended before the skunk could apply
+    ((11, 9), (11, 9)),
+])
+def test_only_zero_score_games_past_11_fold(score, expected):
+    assert parsing.normalise_games([score]) == [expected]
+
+
+def test_the_rest_of_the_session_is_left_alone():
+    games = parse(f"{m(BOB)} 21-17 21-0 21-9")["games"]
+    assert games == [(21, 17), (11, 0), (21, 9)]

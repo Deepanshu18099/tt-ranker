@@ -237,7 +237,7 @@ def parse_match(text, caller=None, bot_id=None):
     games = [v for kind, v in tokens if kind == "score"]
     validate_sides(side_a, side_b)
     validate_games(games)
-    return {"side_a": side_a, "side_b": side_b, "games": games}
+    return {"side_a": side_a, "side_b": side_b, "games": normalise_games(games)}
 
 
 def validate_sides(side_a, side_b):
@@ -273,6 +273,26 @@ def validate_games(games):
             raise ParseError(f"`{a}-{b}` is out of range — scores are the points in one game.")
 
 
+SKUNK_POINTS = 11
+
+
+def normalise_games(games):
+    """Fold a mis-logged skunk onto the score that actually happened.
+
+    The house rule ends a game at 11-0, so a game the loser finished on zero
+    cannot have run past 11 — `21-0` is someone typing the number they play to
+    rather than the number on the table when it stopped. Recording it verbatim
+    would put 10 points that were never played into their points total.
+
+    It changes no rating: the margin is read relative to the game being played,
+    so 21-0 and 11-0 already rescale to the same 11 and score identically. This
+    is about the record being of a game that could have been played.
+    """
+    return [(SKUNK_POINTS, 0) if b == 0 and a > SKUNK_POINTS else
+            (0, SKUNK_POINTS) if a == 0 and b > SKUNK_POINTS else (a, b)
+            for a, b in games]
+
+
 def parse_games(text):
     """Just the game scores out of a blob of text.
 
@@ -282,7 +302,7 @@ def parse_games(text):
     """
     games = [v for kind, v in _tokenize(text) if kind == "score"]
     validate_games(games)
-    return games
+    return normalise_games(games)
 
 
 def parse_odds(text, caller=None, bot_id=None):

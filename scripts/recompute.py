@@ -41,6 +41,7 @@ except ImportError:
 
 import elo
 import kv
+import parsing
 import store
 
 
@@ -61,6 +62,12 @@ def replay(blobs):
     state, weekly, rewritten = {}, {}, []
 
     for blob in blobs:
+        # Re-read the scores under today's rules, which is the point of a replay.
+        # A game logged 21-0 is a skunk typed as the number they play to; the
+        # rating is identical either way, but the points totals shouldn't carry
+        # ten points nobody played.
+        blob = dict(blob, games=parsing.normalise_games(
+            [tuple(g) for g in blob["games"]]))
         uids = blob["side_a"] + blob["side_b"]
         for uid in uids:
             state.setdefault(uid, store.new_player())
