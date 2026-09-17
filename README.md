@@ -643,6 +643,14 @@ No login and no secrets — it shows names and ratings, which everyone in the
 channel can already see. It refreshes itself every minute, but only while the tab
 is actually being looked at.
 
+**Sessions.** Under the ladder, the recent results — and a filter bar to answer
+"what did Bob play today?" Pick a player, tap *Today*, *Yesterday* or *This
+week*, or choose a date; the two combine. The filters live in the address bar
+(`/ladder?player=<uid>&day=today`), so a view can be pasted into the channel,
+and they are plain links and a form — no script needed for them to work. The
+same filters are in Slack: `/tt history @bob today`, `/tt history week`,
+`/tt history 2026-09-16`. Days are read in IST, like everything else here.
+
 **Names.** The page can't render a Slack mention, so it needs something to call
 people. Three tiers, best first:
 

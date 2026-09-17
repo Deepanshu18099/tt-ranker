@@ -1128,23 +1128,49 @@ def handle_board(command, respond):
     respond(text + (f"\n_Live ladder: {url}_" if url else ""))
 
 
+HISTORY_SHOWN = 10        # unfiltered: the last few, like before
+HISTORY_DAY_SHOWN = 30    # a day or a week: show the lot, within reason
+
+
 def handle_history(command, respond, bot_id=None):
+    """`/tt history [@player] [today|yesterday|week|2026-09-16]` — in any order."""
     _, rest = parsing.split_subcommand(command.get("text", ""))
+    day_word, rest = parsing.split_day(rest)
     mentioned = parsing.mentions_in(rest, exclude=bot_id)
     uid = mentioned[0] if mentioned else None
-    matches = store.recent_matches(limit=10, uid=uid)
-    if not matches:
-        respond(f":grey_question: No matches recorded for <@{uid}> yet." if uid
-                else ":grey_question: No matches recorded yet.")
-        return
     who = f" for <@{uid}>" if uid else ""
-    lines = [f":scroll: *Recent matches{who}*"]
-    for blob in matches:
+
+    window = parsing.parse_day(day_word, store.now_ist()) if day_word else None
+    if day_word and not window:
+        respond(f":grey_question: I don't know which day `{day_word}` is. Try `today`, "
+                "`yesterday`, `week`, or a date like `2026-09-16`.")
+        return
+
+    if window:
+        label, start, end = window
+        matches = store.matches_in(start, end, uid=uid)
+        when = f" {label}"
+    else:
+        matches = store.recent_matches(limit=HISTORY_SHOWN, uid=uid)
+        when = ""
+
+    if not matches:
+        respond(f":grey_question: No matches recorded{who}{when}.")
+        return
+    shown = matches[:HISTORY_DAY_SHOWN if window else HISTORY_SHOWN]
+    head = (f":scroll: *Matches{who}{when}* — {len(matches)}" if window
+            else f":scroll: *Recent matches{who}*")
+    lines = [head]
+    for blob in shown:
         deltas = "  ".join(f"<@{u}> `{fmt_delta(blob['deltas'][u])}`"
                            for u in blob["side_a"] + blob["side_b"])
         lines.append(f"`#{blob['id']}`  {fmt_side(blob['side_a'])} "
                      f"*{blob['games_a']}–{blob['games_b']}* {fmt_side(blob['side_b'])}"
                      f"   {deltas}   ·  _{fmt_ago(blob.get('applied_at'))}_")
+    if len(matches) > len(shown):
+        lines.append(f"_…and {len(matches) - len(shown)} more. The ladder page has the "
+                     "full list._" if ladder_url() else
+                     f"_…and {len(matches) - len(shown)} more._")
     respond("\n".join(lines))
 
 
@@ -1260,8 +1286,10 @@ no fixed length. The other side confirms it, then ratings move. Unconfirmed \
 results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 
 *Everything else*
-• `/tt board` — the ladder    • `/tt board singles` — singles only\n• `/tt me [@player]` — one player's card
-• `/tt history [@player]` — recent results    • `/tt pending` — awaiting confirmation
+• `/tt board` — the ladder    • `/tt board singles` — singles only
+• `/tt me [@player]` — one player's card
+• `/tt history [@player] [today|yesterday|week|date]` — results, filtered
+• `/tt pending` — awaiting confirmation
 • `/tt odds @bob` — who's favoured    • `/tt undo` — revert the last match you logged
 • `/tt register` — join early    • `/tt sync` — add everyone in this channel
 • `/tt name Your Name` — how you appear on the web ladder\n• `/tt intro` — post the how-it-works message, for pinning

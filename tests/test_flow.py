@@ -1879,3 +1879,35 @@ def test_the_wallet_says_where_you_stand(fake, client):
     run("register", client, user=B)
     fake.exec(["HSET", "tt:wallet", B, 9000])
     assert "#2 of 2 wallets" in said(run("wallet", client, user=A))
+# --- history by day --------------------------------------------------------
+
+def _played(fake, client, a, b, when):
+    """A confirmed session between a and b, rated at `when`."""
+    rec = store.create_pending([a], [b], [(11, 7), (11, 9)], logged_by=a, now=when)
+    assert store.claim_pending(rec["id"])
+    return store.apply_match(rec, confirmed_by=b, now=when)
+
+
+def test_history_can_be_asked_for_a_day(fake, client):
+    now = store.now_ist()
+    _played(fake, client, A, B, now - timedelta(days=1))
+    today = _played(fake, client, A, C, now)
+    out = said(run("history today", client))
+    assert f"#{today['id']}" in out and f"<@{C}>" in out
+    assert f"<@{B}>" not in out
+    assert "today* — 1" in out
+
+
+def test_history_for_one_player_on_one_day(fake, client):
+    now = store.now_ist()
+    _played(fake, client, A, B, now)
+    _played(fake, client, C, D, now)
+    out = said(run(f"history <@{C}> today", client))
+    assert f"<@{D}>" in out and f"<@{B}>" not in out
+    out = said(run(f"history yesterday <@{C}>", client))
+    assert "No matches recorded" in out and "yesterday" in out
+
+
+def test_an_unreadable_day_is_explained(fake, client):
+    out = said(run("history 2026-13-40", client))
+    assert "don't know which day" in out and "yesterday" in out

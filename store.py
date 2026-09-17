@@ -431,6 +431,45 @@ def recent_matches(limit=10, uid=None):
     return [json.loads(r) for r in raws if r]
 
 
+MATCH_CHUNK = 40   # GETs per round trip while walking history for a window
+
+
+def matches_in(start, end, uid=None, limit=HISTORY_LIMIT):
+    """Applied matches with start <= applied_at < end, newest first — the whole
+    ladder's, or one player's.
+
+    History is newest-first, so this walks it a chunk at a time and stops the
+    moment it passes a match older than `start`, rather than fetching all of
+    history to filter it in Python. A day's matches is one or two round trips.
+    """
+    key = player_history_key(uid) if uid else HISTORY_KEY
+    ids = kv.lrange(key, 0, max(0, limit - 1))
+    out = []
+    for i in range(0, len(ids), MATCH_CHUNK):
+        raws = kv.pipeline([["GET", match_key(m)] for m in ids[i:i + MATCH_CHUNK]])
+        for raw in raws:
+            if not raw:
+                continue
+            blob = json.loads(raw)
+            when = applied_at(blob)
+            if when is None:
+                continue
+            if when < start:
+                return out
+            if when < end:
+                out.append(blob)
+    return out
+
+
+def applied_at(blob):
+    """When a stored match was rated, as a datetime — None if the record is too
+    old to carry one."""
+    try:
+        return datetime.fromisoformat(blob.get("applied_at", ""))
+    except (TypeError, ValueError):
+        return None
+
+
 def last_match_by(uid):
     """The most recent match `uid` logged — what /tt undo acts on. Only their own
     submissions, so undo can't be used to erase someone else's result."""

@@ -104,6 +104,37 @@ def _run_cron(fn):
         return {"error": traceback.format_exc().splitlines()[-1]}, 500
 
 
+def _filtered_matches(players):
+    """The match list the query string asks for: `?player=<uid>&day=today`,
+    either or both. Returns (matches, filters-for-the-page).
+
+    Both parameters are validated before they go anywhere — the player has to
+    be on the ladder and the day has to parse — so the page never echoes a
+    stranger's input, and a bad link degrades to the unfiltered list.
+    """
+    import page
+    import parsing
+    import store
+
+    player = request.args.get("player", "")
+    if player not in players:
+        player = ""
+    day = request.args.get("day", "")
+    window = parsing.parse_day(day, store.now_ist()) if day else None
+    if not window:
+        day = ""
+
+    if window:
+        label, start, end = window
+        recent = store.matches_in(start, end, uid=player or None)
+        return recent, {"player": player, "day": day, "label": label,
+                        "iso": parsing.iso_day(day, store.now_ist())}
+    if player:
+        return store.recent_matches(limit=page.FILTERED_SHOWN, uid=player), \
+            {"player": player, "day": "", "label": ""}
+    return store.recent_matches(limit=page.RECENT_SHOWN), {}
+
+
 def _render_ladder():
     """The public ladder page — the link that goes in the channel topic.
 
@@ -131,12 +162,14 @@ def _render_ladder():
     if view not in dict(page.VIEWS):
         view = ""
     week_delta, week_played = store.week_movement()
+    recent, filters = _filtered_matches(players)
     body = page.render(
         players=store.singles_players(players) if view == "singles" else players,
         names=store.names(),
-        recent=store.recent_matches(limit=8),
+        recent=recent,
         week_delta=week_delta,
         week_played=week_played,
+        filters=filters,
         placement_games=bot.PLACEMENT_GAMES,
         channel_hint=os.environ.get("TT_CHANNEL_NAME", ""),
         updated=store.now_ist().strftime("%H:%M IST"),

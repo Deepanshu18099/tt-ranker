@@ -229,3 +229,47 @@ def test_scan_follows_the_cursor_to_the_end(fake):
     for i in range(250):
         fake.data[f"tt:player:U{i}"] = {"rating": "1000"}
     assert len(kv.scan("tt:*")) == 250
+
+
+# --- matches by day --------------------------------------------------------
+
+def test_a_day_window_returns_only_the_matches_inside_it(fake):
+    from datetime import datetime
+    d16 = datetime(2026, 9, 16, 18, 0, tzinfo=store.IST)
+    d17 = datetime(2026, 9, 17, 9, 30, tzinfo=store.IST)
+    old = confirm(log([A], [B], now=d16), by=B, now=d16)
+    new = confirm(log([A], [C], now=d17), by=C, now=d17)
+    start = datetime(2026, 9, 17, tzinfo=store.IST)
+    found = store.matches_in(start, start + timedelta(days=1))
+    assert [m["id"] for m in found] == [new["id"]]
+    found = store.matches_in(start - timedelta(days=1), start)
+    assert [m["id"] for m in found] == [old["id"]]
+
+
+def test_a_window_can_be_narrowed_to_one_player(fake):
+    from datetime import datetime
+    when = datetime(2026, 9, 17, 9, 30, tzinfo=store.IST)
+    confirm(log([A], [B], now=when), by=B, now=when)
+    confirm(log([C], [D], now=when), by=D, now=when)
+    start = when.replace(hour=0, minute=0)
+    assert len(store.matches_in(start, start + timedelta(days=1))) == 2
+    mine = store.matches_in(start, start + timedelta(days=1), uid=C)
+    assert [set(m["side_a"] + m["side_b"]) for m in mine] == [{C, D}]
+
+
+def test_the_walk_stops_at_the_first_match_older_than_the_window(fake, monkeypatch):
+    """History is newest-first, so once one match predates the window every
+    later one does too; the rest of history should never be fetched."""
+    from datetime import datetime
+    base = datetime(2026, 9, 17, 9, 0, tzinfo=store.IST)
+    for days_back in (5, 4, 3, 2, 1, 0):
+        when = base - timedelta(days=days_back)
+        confirm(log([A], [B], now=when), by=B, now=when)
+    monkeypatch.setattr(store, "MATCH_CHUNK", 2)
+    calls = []
+    real = store.kv.pipeline
+    monkeypatch.setattr(store.kv, "pipeline", lambda cmds: calls.append(cmds) or real(cmds))
+    start = base.replace(hour=0, minute=0)
+    found = store.matches_in(start, start + timedelta(days=1))
+    assert len(found) == 1
+    assert len(calls) == 1   # first chunk of two already crossed the boundary

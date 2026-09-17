@@ -17,7 +17,7 @@ Everything raises ParseError with a message meant for the player, because nearly
 every way this fails has its own fix and one generic usage dump helps nobody.
 """
 import re
-from datetime import timedelta
+from datetime import date, timedelta
 
 import elo
 
@@ -70,6 +70,96 @@ def mentions_in(text, exclude=None):
     bot while logging a match is a mention of a player who wasn't on the table."""
     seen = [uid for uid in MENTION_RE.findall(text or "") if uid != exclude]
     return list(dict.fromkeys(seen))
+
+
+# --- days ------------------------------------------------------------------
+
+DAY_WORDS = {"today": 0, "yesterday": 1, "week": 7, "thisweek": 7, "this-week": 7}
+_ISO_DAY = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})$")
+_DMY_DAY = re.compile(r"^(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?$")
+
+
+def iso_day(text, now):
+    """The ISO date a day expression resolves to, or "" for a range like `week`.
+
+    `<input type="date">` only accepts YYYY-MM-DD, so echoing `16/9` straight
+    back leaves the picker blank while the view is filtered — the page saying it
+    isn't doing the thing it is doing.
+    """
+    window = parse_day(text, now)
+    if not window:
+        return ""
+    _, start, end = window
+    return start.strftime("%Y-%m-%d") if (end - start) == timedelta(days=1) else ""
+
+
+def parse_day(text, now):
+    """One day (or the week) named in a command → (label, start, end), or None.
+
+    Understands `today`, `yesterday`, `week`, an ISO date `2026-09-16`, and
+    `16/9` or `16/09/2026` — the words people actually type, without becoming a
+    date library. Bounds are half-open [start, end) at midnight in whatever
+    zone `now` carries, so a 23:59 match lands on the right side. `week` is the
+    last seven days ending now, not the ISO week: "what happened this week" is a
+    rolling question, and the weekly post already covers calendar weeks.
+    """
+    word = (text or "").strip().lower().replace("this week", "thisweek")
+    if not word:
+        return None
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if word in DAY_WORDS:
+        back = DAY_WORDS[word]
+        if back == 7:
+            return "this week", midnight - timedelta(days=6), midnight + timedelta(days=1)
+        start = midnight - timedelta(days=back)
+        return word, start, start + timedelta(days=1)
+    day = _one_day(word, now)
+    if day is None:
+        return None
+    start = midnight.replace(year=day.year, month=day.month, day=day.day)
+    if start == midnight:
+        label = "today"
+    elif start == midnight - timedelta(days=1):
+        label = "yesterday"
+    else:
+        label = f"{start.day} {start.strftime('%b')}" + \
+            ("" if start.year == now.year else f" {start.year}")
+    return label, start, start + timedelta(days=1)
+
+
+def _one_day(word, now):
+    m = _ISO_DAY.match(word)
+    if m:
+        year, month, day = (int(g) for g in m.groups())
+    else:
+        m = _DMY_DAY.match(word)
+        if not m:
+            return None
+        day, month = int(m.group(1)), int(m.group(2))
+        year = int(m.group(3)) if m.group(3) else now.year
+        if year < 100:
+            year += 2000
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def split_day(text):
+    """(day word, rest) — pull a day out of a command's tail, wherever it sits,
+    so `history @bob today` and `history today @bob` both read. Only whole
+    tokens: a score like `11-7` is never mistaken for a date."""
+    # Two-word "this week" first, so the bare `week` token below doesn't leave
+    # a stray `this` behind in the rest.
+    text = re.sub(r"(?i)\bthis week\b", "thisweek", text or "")
+    kept, found = [], ""
+    for token in text.split():
+        low = token.lower()
+        if not found and (low in DAY_WORDS or _ISO_DAY.match(low) or _DMY_DAY.match(low)):
+            found = low
+        else:
+            kept.append(token)
+    return found, " ".join(kept)
 
 
 def split_subcommand(text):
