@@ -1,0 +1,407 @@
+"""
+Spins — the office currency — and the pools people stake them into.
+
+A scheduled match opens a betting window that shuts the moment the match is due
+to start. Everyone who backed the winning side splits the whole pot in
+proportion to what they staked.
+
+**Pari-mutuel, not fixed odds.** Nobody here is the bookmaker. Every spin paid
+out came from another player's stake, so the money supply can't inflate however
+many upsets land, and there is no house to go bust. The cost is that you don't
+know your exact return when you stake — so the match message carries a live "if
+it settled now" figure, and the Elo-implied odds beside it as a guide.
+
+Two rules the maths rests on:
+
+1. **Stakes are taken when the bet is placed, payouts credited at settlement.**
+   A wallet can never go negative, and an abandoned match refunds exactly what
+   went in.
+2. **The pot is conserved to the last spin.** Proportional shares are floored,
+   and the rounding remainder goes to the largest winning stake rather than
+   quietly evaporating.
+
+Players may bet on their own matches, including against themselves. That's a
+deliberate house rule, so the only guard is daylight: `backing_against_self()`
+flags it and the match message says so out loud.
+"""
+import json
+from datetime import datetime, timedelta
+
+import elo
+import kv
+import store
+
+CURRENCY = "spins"
+START_SPINS = 500
+# Nobody starts a week broke: a wallet can never go negative, so the stipend on
+# its own guarantees at least this much every Monday. No separate floor is
+# needed, and one that could never fire would be dead code in the money path.
+WEEKLY_STIPEND = 100
+MIN_BET = 5
+
+WALLET_KEY = "tt:wallet"
+LIVE_KEY = "tt:sched:live"
+SEQ_KEY = "tt:sched:seq"
+STIPEND_KEY = "tt:stipend:paid"
+LEDGER_LIMIT = 30
+# Long enough that a match nobody ever reports still gets swept and refunded.
+SCHED_TTL_SECONDS = 14 * 24 * 3600
+# A scheduled match whose result never arrives is voided and refunded after this.
+ABANDON_HOURS = 48
+
+
+def sched_key(sid):
+    return f"tt:sched:{sid}"
+
+
+def bets_key(sid):
+    return f"tt:bets:{sid}"
+
+
+def ledger_key(uid):
+    return f"tt:ledger:{uid}"
+
+
+# --- wallets ---------------------------------------------------------------
+
+def ensure_wallets(uids):
+    """Open a wallet for anyone who hasn't got one. HSETNX so an existing
+    balance is never reset by someone merely being looked at."""
+    uids = [u for u in dict.fromkeys(uids) if u]
+    if uids:
+        kv.pipeline([["HSETNX", WALLET_KEY, u, START_SPINS] for u in uids])
+    return uids
+
+
+def balance(uid):
+    raw = kv.hget(WALLET_KEY, uid)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return START_SPINS  # never opened one; this is what it would hold
+
+
+def balances():
+    out = {}
+    for uid, raw in (kv.hgetall(WALLET_KEY) or {}).items():
+        try:
+            out[uid] = int(raw)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def adjust(uid, amount, reason, now=None):
+    """Move a wallet and note why. Returns the new balance."""
+    ensure_wallets([uid])
+    new = int(kv.hincrby(WALLET_KEY, uid, int(amount)))
+    entry = json.dumps({"at": store.stamp(now), "delta": int(amount),
+                        "reason": reason, "balance": new})
+    try:
+        kv.pipeline([["LPUSH", ledger_key(uid), entry],
+                     ["LTRIM", ledger_key(uid), 0, LEDGER_LIMIT - 1]])
+    except Exception:
+        pass  # the ledger is a courtesy; the balance is the truth
+    return new
+
+
+def ledger(uid, limit=10):
+    out = []
+    for raw in kv.lrange(ledger_key(uid), 0, max(0, limit - 1)):
+        try:
+            out.append(json.loads(raw))
+        except ValueError:
+            continue
+    return out
+
+
+def pay_stipend(week=None, now=None):
+    """Top every wallet up once a week. Idempotent per week — the claim is the
+    SADD, so a cron retry can't pay twice."""
+    week = week or store.week_key(now)
+    if kv.sadd(STIPEND_KEY, week) != 1:
+        return {"status": "already_paid", "week": week}
+    players = list(store.all_players())
+    if not players:
+        kv.srem(STIPEND_KEY, week)  # nothing to pay; let a later run try
+        return {"status": "no_players", "week": week}
+    ensure_wallets(players)
+    for uid in players:
+        adjust(uid, WEEKLY_STIPEND, "weekly stipend", now)
+    return {"status": "paid", "week": week, "players": len(players),
+            "each": WEEKLY_STIPEND}
+
+
+# --- scheduling ------------------------------------------------------------
+
+def schedule(side_a, side_b, starts_at, created_by, channel="", note="", now=None):
+    """Open a match and its betting window."""
+    record = {
+        "id": str(kv.incr(SEQ_KEY)),
+        "side_a": list(side_a), "side_b": list(side_b),
+        "starts_at": store.stamp(starts_at),
+        "created_by": created_by,
+        "created_at": store.stamp(now),
+        "channel": channel or "", "ts": "",
+        "note": note or "",
+        "state": "open",
+        "winner": "", "settled_at": "", "match_id": "",
+    }
+    save(record)
+    kv.sadd(LIVE_KEY, record["id"])
+    ensure_wallets(side_a + side_b + [created_by])
+    return record
+
+
+def save(record):
+    kv.set_(sched_key(record["id"]), json.dumps(record), ex=SCHED_TTL_SECONDS)
+    return record
+
+
+def get(sid):
+    raw = kv.get(sched_key(sid))
+    return json.loads(raw) if raw else None
+
+
+def live():
+    """Every match not yet settled or voided, oldest first. Ids whose JSON has
+    expired drop out of the index on the way past."""
+    ids = sorted(kv.smembers(LIVE_KEY), key=lambda s: int(s) if s.isdigit() else 0)
+    if not ids:
+        return []
+    raws = kv.pipeline([["GET", sched_key(i)] for i in ids])
+    out, stale = [], []
+    for sid, raw in zip(ids, raws):
+        (out if raw else stale).append(json.loads(raw) if raw else sid)
+    if stale:
+        kv.srem(LIVE_KEY, *stale)
+    return out
+
+
+def starts_at(record):
+    try:
+        return datetime.fromisoformat(record["starts_at"])
+    except (KeyError, ValueError):
+        return None
+
+
+def is_due(record, now=None):
+    when = starts_at(record)
+    return bool(when and (now or store.now_ist()) >= when)
+
+
+def close_if_due(record, now=None):
+    """Shut the betting window the moment the match is due.
+
+    Checked on read as well as by the sweep: crons run daily, and a window that
+    stayed open because nothing had run yet would let people bet on a match
+    already in progress.
+    """
+    if record.get("state") == "open" and is_due(record, now):
+        record["state"] = "closed"
+        save(record)
+        return True
+    return False
+
+
+def is_abandoned(record, now=None, hours=ABANDON_HOURS):
+    """Long past its start with no result in. Deliberately keyed off the clock
+    rather than the state: a fixture that is both overdue and abandoned must be
+    closed *and* refunded by the same sweep, not one per daily run."""
+    when = starts_at(record)
+    return bool(record.get("state") in ("open", "closed") and when
+                and (now or store.now_ist()) - when >= timedelta(hours=hours))
+
+
+# --- bets ------------------------------------------------------------------
+
+def bets(sid):
+    """{uid: (side, amount)} for one match."""
+    out = {}
+    for uid, raw in (kv.hgetall(bets_key(sid)) or {}).items():
+        side, _, amount = str(raw).partition(":")
+        try:
+            out[uid] = (side, int(amount))
+        except ValueError:
+            continue
+    return out
+
+
+def pool(sid):
+    """The pot, split by side, plus how many people are on each."""
+    placed = bets(sid)
+    totals = {"a": 0, "b": 0}
+    backers = {"a": 0, "b": 0}
+    for side, amount in placed.values():
+        if side in totals:
+            totals[side] += amount
+            backers[side] += 1
+    return {"a": totals["a"], "b": totals["b"], "total": totals["a"] + totals["b"],
+            "backers_a": backers["a"], "backers_b": backers["b"], "bets": placed}
+
+
+def projected(pot, side):
+    """What a spin on `side` returns if the pot settled as it stands. 0.0 means
+    nobody is on that side yet, so any stake would take the lot."""
+    staked = pot["a"] if side == "a" else pot["b"]
+    if not staked:
+        return 0.0
+    return pot["total"] / staked
+
+
+def place_bet(record, uid, side, amount, now=None):
+    """Stake spins on a side. Returns (ok, message).
+
+    The stake leaves the wallet now. Settlement only ever credits, so a wallet
+    cannot go negative and a voided match refunds exactly what went in.
+    """
+    if side not in ("a", "b"):
+        return False, "Pick a side."
+    close_if_due(record, now)
+    if record["state"] != "open":
+        when = starts_at(record)
+        shut = when.strftime("%H:%M") if when else "already"
+        return False, (f"Betting on `#{record['id']}` closed at {shut} — "
+                       "the match is under way.")
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return False, f"How many {CURRENCY}? Whole numbers only."
+    if amount < MIN_BET:
+        return False, f"Smallest stake is {MIN_BET} {CURRENCY}."
+
+    ensure_wallets([uid])
+    existing = bets(record["id"]).get(uid)
+    if existing and existing[0] != side:
+        return False, (f"You're already on the other side of `#{record['id']}` "
+                       f"for {existing[1]} {CURRENCY}. Pick one.")
+    held = balance(uid)
+    if amount > held:
+        return False, f"You have {held} {CURRENCY}."
+
+    adjust(uid, -amount, f"stake on #{record['id']}", now)
+    staked = (existing[1] if existing else 0) + amount
+    kv.hset(bets_key(record["id"]), uid, f"{side}:{staked}")
+    return True, (f"{amount} {CURRENCY} on "
+                  f"{'their' if side == 'a' else 'the other'} side — "
+                  f"you're in for {staked}.")
+
+
+def backing_against_self(record):
+    """Players who staked on the side they aren't playing for.
+
+    Allowed by house rule, so the guard is visibility: the match message names
+    them, and everyone can draw their own conclusions.
+    """
+    placed = bets(record["id"])
+    out = []
+    for uid, (side, amount) in placed.items():
+        mine = "a" if uid in record["side_a"] else ("b" if uid in record["side_b"] else None)
+        if mine and side != mine:
+            out.append((uid, amount))
+    return sorted(out)
+
+
+# --- settlement ------------------------------------------------------------
+
+def payouts(placed, winner):
+    """{uid: spins returned}. Losers get 0; a void or a no-winner pot refunds.
+
+    Shares are floored and the remainder handed to the largest winning stake, so
+    the pot comes out to exactly what went in — spins are never quietly burned.
+    """
+    total = sum(amount for _, amount in placed.values())
+    if not total:
+        return {}
+    if winner not in ("a", "b"):
+        return {uid: amount for uid, (_, amount) in placed.items()}
+    winning = {uid: amount for uid, (side, amount) in placed.items() if side == winner}
+    won_total = sum(winning.values())
+    if not won_total:
+        return {uid: amount for uid, (_, amount) in placed.items()}
+
+    out = {uid: (amount * total) // won_total for uid, amount in winning.items()}
+    remainder = total - sum(out.values())
+    if remainder:
+        out[max(winning, key=lambda u: (winning[u], u))] += remainder
+    for uid in placed:
+        out.setdefault(uid, 0)
+    return out
+
+
+def claim(sid):
+    """Take a match out of the live index. True for exactly one caller, so a
+    settlement and a sweep racing each other can't pay a pot twice."""
+    return kv.srem(LIVE_KEY, sid) == 1
+
+
+def settle(record, winner, match_id="", now=None):
+    """Pay out a decided match. The caller must have won claim() first."""
+    placed = bets(record["id"])
+    paid = payouts(placed, winner)
+    for uid, amount in paid.items():
+        if amount:
+            adjust(uid, amount, f"#{record['id']} settled", now)
+    record.update({"state": "settled", "winner": winner,
+                   "settled_at": store.stamp(now), "match_id": match_id or "",
+                   "payouts": paid, "staked": {u: a for u, (_, a) in placed.items()}})
+    save(record)
+    return record
+
+
+def void(record, reason="", now=None):
+    """Call it off and hand every stake back."""
+    placed = bets(record["id"])
+    for uid, (_, amount) in placed.items():
+        adjust(uid, amount, f"#{record['id']} refunded", now)
+    record.update({"state": "void", "voided_at": store.stamp(now),
+                   "reason": reason, "refunds": {u: a for u, (_, a) in placed.items()}})
+    save(record)
+    return record
+
+
+def side_of(record, side_a, side_b):
+    """Which side of a scheduled match a confirmed session corresponds to, or
+    None if it isn't the same fixture. Order within a side doesn't matter, and
+    neither does which side was typed first."""
+    mine, theirs = set(record["side_a"]), set(record["side_b"])
+    got_a, got_b = set(side_a), set(side_b)
+    if (mine, theirs) == (got_a, got_b):
+        return "same"
+    if (mine, theirs) == (got_b, got_a):
+        return "flipped"
+    return None
+
+
+def find_for_result(side_a, side_b):
+    """The scheduled match a just-confirmed session settles, if any.
+
+    Matched on the players alone, so nobody has to quote an id when logging.
+    Oldest first, so a standing fixture between two regulars settles in order.
+    """
+    for record in live():
+        if record.get("state") in ("open", "closed") and side_of(record, side_a, side_b):
+            return record
+    return None
+
+
+def winner_from(record, side_a, games_a, games_b):
+    """"a" | "b" | "draw" — the result expressed in the *scheduled* match's
+    terms, whichever way round the session happened to be logged."""
+    if games_a == games_b:
+        return "draw"
+    session_a_won = games_a > games_b
+    logged_same_way = set(record["side_a"]) == set(side_a)
+    if logged_same_way:
+        return "a" if session_a_won else "b"
+    return "b" if session_a_won else "a"
+
+
+def elo_odds(record):
+    """(chance side A takes a game, chance side B does) from current ratings —
+    shown next to the pool as a sanity check on what the crowd thinks."""
+    players = store.load_for_match(record["side_a"] + record["side_b"])
+    entries = lambda side: [{"uid": u, "rating": players[u]["rating"],
+                             "games": elo.games_played(players[u])} for u in side]
+    chance = elo.win_probability(entries(record["side_a"]), entries(record["side_b"]))
+    return chance, 1.0 - chance

@@ -169,7 +169,9 @@ def route(subpath):
         return _run_cron(lambda s, client, dry: s.post_weekly(client, dry_run=dry))
 
     if tail.endswith("/cron/sweep"):
-        return _run_cron(lambda s, client, dry: s.sweep_pending(client, dry_run=dry))
+        return _run_cron(lambda s, client, dry: {
+            **s.sweep_pending(client, dry_run=dry),
+            "fixtures": s.sweep_fixtures(client, dry_run=dry)})
 
     if tail.endswith("/ladder"):
         return _render_ladder()

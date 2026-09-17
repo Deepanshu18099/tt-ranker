@@ -107,7 +107,12 @@ def post_weekly(client, now=None, channel=None, force=False, dry_run=False):
         kv.srem(POSTED_KEY, week_key)  # nothing happened; let a later run try
         return {"status": "no_activity", "week": week_key}
     resp = client.chat_postMessage(channel=target, text=text)
-    return {"status": "posted", "week": week_key, "ts": resp["ts"], "channel": resp["channel"]}
+    # Monday is also payday. Idempotent per week on its own claim, so a retry of
+    # the post can't hand out a second stipend.
+    import betting
+    stipend = betting.pay_stipend(now=now)
+    return {"status": "posted", "week": week_key, "ts": resp["ts"],
+            "channel": resp["channel"], "stipend": stipend}
 
 
 def sweep_pending(client, now=None, dry_run=False, logger=None):
@@ -140,8 +145,46 @@ def sweep_pending(client, now=None, dry_run=False, logger=None):
             continue
         applied.append(blob["id"])
         _update_original(client, blob, logger=logger)
+        bot._settle_bets(blob, client, logger=logger)
     return {"status": "dry_run" if dry_run else "swept",
             "applied": applied, "still_waiting": skipped}
+
+
+def sweep_fixtures(client, now=None, dry_run=False, logger=None):
+    """Shut betting on fixtures that have started, and refund ones whose result
+    never arrived.
+
+    Crons run daily, so this is the tidy-up, not the enforcement: place_bet
+    closes an overdue window itself the moment anyone tries. Without the refund
+    pass, a match nobody ever reports would hold people's stakes for good.
+    """
+    import betting
+    now = now or store.now_ist()
+    closed, voided = [], []
+    for record in betting.live():
+        if record.get("state") == "open" and betting.is_due(record, now):
+            if not dry_run:
+                betting.close_if_due(record, now)
+                bot._refresh_fixture(record, client, now, logger=logger)
+            closed.append(record["id"])
+        # Not elif: one that is overdue *and* abandoned gets both in this pass.
+        if betting.is_abandoned(record, now):
+            if dry_run:
+                voided.append(record["id"])
+                continue
+            if not betting.claim(record["id"]):
+                continue
+            refunded = betting.pool(record["id"])["total"]
+            betting.void(record, "no result was ever logged", now)
+            bot._refresh_with(record, client, [
+                bot._section(f":no_entry_sign: ~{bot.fmt_side(record['side_a'])} vs "
+                             f"{bot.fmt_side(record['side_b'])}~ — no result logged."),
+                bot._context("Every stake refunded."
+                             + (f" {bot.fmt_spins(refunded)} returned."
+                                if refunded else "")),
+            ], "Fixture abandoned.", logger=logger)
+            voided.append(record["id"])
+    return {"closed": closed, "refunded": voided}
 
 
 def _update_original(client, blob, logger=None):

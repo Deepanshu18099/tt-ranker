@@ -1,0 +1,370 @@
+"""Spins, pools and settlement.
+
+Every test that moves money also checks the pot balances. A rating bug is an
+argument; a wallet bug is an argument nobody can settle.
+"""
+from datetime import timedelta
+
+import pytest
+
+import betting
+import store
+from tests.fake_kv import FakeRedis
+
+A, B, C, D, E = "U0AAA1", "U0BBB1", "U0CCC1", "U0DDD1", "U0EEE1"
+
+
+@pytest.fixture
+def fake():
+    redis = FakeRedis()
+    with redis.patched():
+        yield redis
+
+
+def fixture_at(minutes=60, side_a=None, side_b=None, by=None, now=None):
+    now = now or store.now_ist()
+    return betting.schedule(side_a or [A], side_b or [B],
+                            now + timedelta(minutes=minutes),
+                            created_by=by or A, channel="C1", now=now)
+
+
+def total_held(uids):
+    return sum(betting.balance(u) for u in uids)
+
+
+# --- wallets ---------------------------------------------------------------
+
+def test_everyone_opens_with_the_same_stake(fake):
+    betting.ensure_wallets([A, B])
+    assert betting.balance(A) == betting.balance(B) == betting.START_SPINS
+
+
+def test_opening_a_wallet_never_resets_an_existing_one(fake):
+    betting.ensure_wallets([A])
+    betting.adjust(A, -200, "test")
+    betting.ensure_wallets([A, B])
+    assert betting.balance(A) == betting.START_SPINS - 200
+    assert betting.balance(B) == betting.START_SPINS
+
+
+def test_the_ledger_says_where_the_spins_went(fake):
+    betting.adjust(A, -50, "stake on #1")
+    betting.adjust(A, 120, "#1 settled")
+    entries = betting.ledger(A)
+    assert [e["delta"] for e in entries] == [120, -50]      # newest first
+    assert entries[0]["balance"] == betting.START_SPINS - 50 + 120
+
+
+def test_a_ledger_outage_never_costs_anyone_spins(fake, monkeypatch):
+    """The balance is the truth; the ledger is a courtesy."""
+    monkeypatch.setattr(betting.kv, "pipeline",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    with pytest.raises(RuntimeError):
+        betting.ensure_wallets([A])          # the pipeline is used here too
+    monkeypatch.undo()
+    betting.ensure_wallets([A])
+    monkeypatch.setattr(betting.kv, "lpush",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    assert betting.adjust(A, -25, "stake") == betting.START_SPINS - 25
+
+
+# --- the stipend -----------------------------------------------------------
+
+def test_payday_tops_everyone_up(fake):
+    store.ensure_players([A, B])
+    result = betting.pay_stipend(week="tt:wk:2026-W38")
+    assert result["status"] == "paid" and result["players"] == 2
+    assert betting.balance(A) == betting.START_SPINS + betting.WEEKLY_STIPEND
+
+
+def test_payday_happens_once_a_week(fake):
+    store.ensure_players([A])
+    betting.pay_stipend(week="tt:wk:2026-W38")
+    assert betting.pay_stipend(week="tt:wk:2026-W38")["status"] == "already_paid"
+    assert betting.balance(A) == betting.START_SPINS + betting.WEEKLY_STIPEND
+
+
+def test_nobody_starts_a_week_broke(fake):
+    """Losing everything costs you a week, not the game. A wallet can't go
+    negative, so the stipend alone is the floor — no separate rescue needed."""
+    store.ensure_players([A])
+    betting.ensure_wallets([A])
+    betting.adjust(A, -betting.START_SPINS, "lost it all")
+    assert betting.balance(A) == 0
+    betting.pay_stipend(week="tt:wk:2026-W38")
+    assert betting.balance(A) == betting.WEEKLY_STIPEND
+    assert betting.WEEKLY_STIPEND >= betting.MIN_BET * 2   # enough to play again
+
+
+def test_a_week_with_no_players_stays_claimable(fake):
+    assert betting.pay_stipend(week="tt:wk:2026-W38")["status"] == "no_players"
+    store.ensure_players([A])
+    assert betting.pay_stipend(week="tt:wk:2026-W38")["status"] == "paid"
+
+
+# --- placing bets ----------------------------------------------------------
+
+def test_a_stake_leaves_the_wallet_immediately(fake):
+    record = fixture_at()
+    ok, _ = betting.place_bet(record, C, "a", 50)
+    assert ok
+    assert betting.balance(C) == betting.START_SPINS - 50
+    assert betting.pool(record["id"])["a"] == 50
+
+
+def test_you_cannot_stake_more_than_you_hold(fake):
+    record = fixture_at()
+    ok, message = betting.place_bet(record, C, "a", betting.START_SPINS + 1)
+    assert not ok and str(betting.START_SPINS) in message
+    assert betting.balance(C) == betting.START_SPINS
+
+
+def test_a_stake_below_the_minimum_is_refused(fake):
+    record = fixture_at()
+    ok, message = betting.place_bet(record, C, "a", 1)
+    assert not ok and "Smallest stake" in message
+
+
+def test_topping_up_the_same_side_adds_to_your_stake(fake):
+    record = fixture_at()
+    betting.place_bet(record, C, "a", 50)
+    betting.place_bet(record, C, "a", 30)
+    assert betting.bets(record["id"])[C] == ("a", 80)
+    assert betting.balance(C) == betting.START_SPINS - 80
+
+
+def test_you_cannot_be_on_both_sides(fake):
+    record = fixture_at()
+    betting.place_bet(record, C, "a", 50)
+    ok, message = betting.place_bet(record, C, "b", 50)
+    assert not ok and "other side" in message
+    assert betting.balance(C) == betting.START_SPINS - 50
+
+
+def test_betting_shuts_when_the_match_is_due(fake):
+    now = store.now_ist()
+    record = fixture_at(minutes=30, now=now)
+    ok, message = betting.place_bet(record, C, "a", 50, now=now + timedelta(minutes=31))
+    assert not ok and "closed" in message
+    assert betting.get(record["id"])["state"] == "closed"
+    assert betting.balance(C) == betting.START_SPINS
+
+
+def test_a_player_may_back_their_own_opponent(fake):
+    """House rule. The guard is that it's visible, not that it's blocked."""
+    record = fixture_at(side_a=[A], side_b=[B])
+    ok, _ = betting.place_bet(record, A, "b", 50)
+    assert ok
+    assert betting.backing_against_self(record) == [(A, 50)]
+
+
+def test_backing_yourself_is_not_flagged(fake):
+    record = fixture_at(side_a=[A], side_b=[B])
+    betting.place_bet(record, A, "a", 50)
+    betting.place_bet(record, C, "b", 50)       # a spectator, not a player
+    assert betting.backing_against_self(record) == []
+
+
+# --- the pool maths --------------------------------------------------------
+
+def test_winners_split_the_pot_in_proportion():
+    placed = {C: ("a", 300), D: ("a", 100), E: ("b", 100)}
+    paid = betting.payouts(placed, "a")
+    assert paid == {C: 375, D: 125, E: 0}
+    assert sum(paid.values()) == 500            # the whole pot, nothing minted
+
+
+@pytest.mark.parametrize("placed,winner", [
+    ({C: ("a", 7), D: ("a", 11), E: ("b", 13)}, "a"),
+    ({C: ("a", 1000), D: ("b", 3), E: ("b", 3)}, "b"),
+    ({C: ("a", 5), D: ("a", 5), E: ("a", 5)}, "a"),
+    ({C: ("a", 33), D: ("a", 33), E: ("a", 34), A: ("b", 100)}, "a"),
+])
+def test_the_pot_is_conserved_to_the_last_spin(placed, winner):
+    """Floored shares would quietly burn spins; the remainder goes to the
+    largest winning stake instead."""
+    paid = betting.payouts(placed, winner)
+    assert sum(paid.values()) == sum(a for _, a in placed.values())
+
+
+def test_a_draw_refunds_everyone():
+    placed = {C: ("a", 300), D: ("b", 100)}
+    assert betting.payouts(placed, "draw") == {C: 300, D: 100}
+
+
+def test_nobody_on_the_winning_side_means_everyone_is_refunded():
+    placed = {C: ("a", 300), D: ("a", 100)}
+    assert betting.payouts(placed, "b") == {C: 300, D: 100}
+
+
+def test_everyone_on_the_winning_side_just_gets_their_stake_back():
+    placed = {C: ("a", 300), D: ("a", 100)}
+    assert betting.payouts(placed, "a") == {C: 300, D: 100}
+
+
+def test_an_empty_pot_settles_to_nothing():
+    assert betting.payouts({}, "a") == {}
+
+
+def test_projected_returns_track_the_pool(fake):
+    record = fixture_at()
+    betting.place_bet(record, C, "a", 300)
+    betting.place_bet(record, D, "b", 100)
+    pot = betting.pool(record["id"])
+    assert betting.projected(pot, "a") == pytest.approx(400 / 300)
+    assert betting.projected(pot, "b") == pytest.approx(4.0)
+
+
+def test_an_untouched_side_has_no_projection(fake):
+    record = fixture_at()
+    betting.place_bet(record, C, "a", 50)
+    assert betting.projected(betting.pool(record["id"]), "b") == 0.0
+
+
+# --- settlement ------------------------------------------------------------
+
+def test_settling_pays_the_winners_and_conserves_the_pot(fake):
+    record = fixture_at()
+    betting.place_bet(record, C, "a", 300)
+    betting.place_bet(record, D, "b", 100)
+    before = total_held([C, D])
+
+    assert betting.claim(record["id"])
+    settled = betting.settle(record, "a")
+
+    assert betting.balance(C) == betting.START_SPINS + 100    # 300 back as 400
+    assert betting.balance(D) == betting.START_SPINS - 100
+    assert total_held([C, D]) == before + 400                 # the staked pot returns
+    assert settled["state"] == "settled" and settled["winner"] == "a"
+
+
+def test_a_pot_can_only_be_settled_once(fake):
+    record = fixture_at()
+    betting.place_bet(record, C, "a", 50)
+    assert betting.claim(record["id"]) is True
+    assert betting.claim(record["id"]) is False
+
+
+def test_voiding_hands_every_stake_back(fake):
+    record = fixture_at()
+    betting.place_bet(record, C, "a", 300)
+    betting.place_bet(record, D, "b", 100)
+    betting.void(record, "called off")
+    assert betting.balance(C) == betting.balance(D) == betting.START_SPINS
+    assert betting.get(record["id"])["state"] == "void"
+
+
+def test_a_fixture_nobody_reports_is_abandoned(fake):
+    now = store.now_ist()
+    record = fixture_at(minutes=10, now=now)
+    betting.close_if_due(record, now + timedelta(minutes=11))
+    assert not betting.is_abandoned(record, now + timedelta(hours=1))
+    assert betting.is_abandoned(record, now + timedelta(hours=betting.ABANDON_HOURS + 1))
+
+
+# --- matching a result to a fixture ---------------------------------------
+
+def test_a_result_finds_its_fixture_whichever_way_it_was_logged(fake):
+    record = fixture_at(side_a=[A], side_b=[B])
+    assert betting.find_for_result([A], [B])["id"] == record["id"]
+    assert betting.find_for_result([B], [A])["id"] == record["id"]
+
+
+def test_a_different_fixture_is_not_claimed(fake):
+    fixture_at(side_a=[A], side_b=[B])
+    assert betting.find_for_result([A], [C]) is None
+    assert betting.find_for_result([A, C], [B, D]) is None
+
+
+def test_doubles_fixtures_match_on_the_pair_not_the_order(fake):
+    record = fixture_at(side_a=[A, B], side_b=[C, D])
+    assert betting.find_for_result([B, A], [D, C])["id"] == record["id"]
+
+
+def test_the_winner_is_read_in_the_fixtures_terms(fake):
+    record = fixture_at(side_a=[A], side_b=[B])
+    assert betting.winner_from(record, [A], 3, 0) == "a"
+    assert betting.winner_from(record, [A], 0, 3) == "b"
+    # logged the other way round: side A of the *session* is B of the fixture
+    assert betting.winner_from(record, [B], 3, 0) == "b"
+    assert betting.winner_from(record, [B], 0, 3) == "a"
+    assert betting.winner_from(record, [A], 2, 2) == "draw"
+
+
+def test_a_settled_fixture_is_no_longer_findable(fake):
+    record = fixture_at(side_a=[A], side_b=[B])
+    betting.claim(record["id"])
+    betting.settle(record, "a")
+    assert betting.find_for_result([A], [B]) is None
+
+
+# --- the property that matters ---------------------------------------------
+
+EVERYONE = [A, B, C, D, E]
+
+
+def supply():
+    """Every spin in existence: in wallets, plus everything currently staked."""
+    held = sum(betting.balance(u) for u in EVERYONE)
+    staked = sum(betting.pool(r["id"])["total"] for r in betting.live())
+    return held + staked
+
+
+@pytest.mark.parametrize("script", [
+    [("a", C, 100), ("b", D, 100)],
+    [("a", C, 300), ("a", D, 100), ("b", E, 50)],
+    [("a", C, 7), ("a", D, 11), ("a", E, 13), ("b", A, 29)],
+    [("b", C, 500)],                                   # one side only
+    [("a", C, 5), ("b", D, 5), ("a", E, 5), ("b", A, 5)],
+])
+@pytest.mark.parametrize("winner", ["a", "b", "draw"])
+def test_no_spin_is_ever_created_or_destroyed(fake, script, winner):
+    """Stakes leave wallets, payouts come back, and the two always agree —
+    whatever the split, whoever wins, and however the shares round."""
+    betting.ensure_wallets(EVERYONE)
+    opening = supply()
+
+    record = fixture_at()
+    for side, uid, amount in script:
+        assert betting.place_bet(record, uid, side, amount)[0]
+    assert supply() == opening, "staking moved spins out of the system"
+
+    assert betting.claim(record["id"])
+    betting.settle(record, winner)
+    assert supply() == opening, "settling minted or burned spins"
+
+
+def test_voiding_conserves_the_supply_too(fake):
+    betting.ensure_wallets(EVERYONE)
+    opening = supply()
+    record = fixture_at()
+    betting.place_bet(record, C, "a", 137)
+    betting.place_bet(record, D, "b", 41)
+    betting.claim(record["id"])
+    betting.void(record, "called off")
+    assert supply() == opening
+
+
+def test_several_fixtures_settling_in_any_order_conserve_the_supply(fake):
+    betting.ensure_wallets(EVERYONE)
+    opening = supply()
+    first = fixture_at(side_a=[A], side_b=[B])
+    second = fixture_at(side_a=[C], side_b=[D])
+    betting.place_bet(first, C, "a", 90)
+    betting.place_bet(first, D, "b", 30)
+    betting.place_bet(second, A, "a", 60)
+    betting.place_bet(second, E, "b", 45)
+
+    for record, winner in ((second, "b"), (first, "a")):   # settled out of order
+        assert betting.claim(record["id"])
+        betting.settle(record, winner)
+    assert supply() == opening
+
+
+def test_the_stipend_is_the_only_thing_that_mints(fake):
+    """Every other path is zero-sum; new spins come from exactly one place."""
+    store.ensure_players(EVERYONE)
+    betting.ensure_wallets(EVERYONE)
+    opening = supply()
+    betting.pay_stipend(week="tt:wk:2026-W38")
+    assert supply() == opening + betting.WEEKLY_STIPEND * len(EVERYONE)

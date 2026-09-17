@@ -55,6 +55,8 @@ Everything is one slash command, `/tt`.
 | `/tt name Your Name` | How you appear on the web ladder |
 | `/tt name @bob Bob Smith` | Admins only — set it for someone else |
 | `/tt intro` | Post the how-it-works message, for pinning |
+| `/tt schedule @bob 6pm` | Put up a fixture the channel can bet on |
+| `/tt book` · `/tt wallet` | Open fixtures · your spins |
 | `/tt help` | All of the above, in Slack |
 
 ### The form
@@ -422,7 +424,9 @@ Slack ──▶ /slack/events ──▶ api/index.py (Flask on Vercel)
 | [parsing.py](parsing.py) | `/tt` grammar: mentions, the `vs` separator, scores, validation. |
 | [store.py](store.py) | Persistence: players, the pending queue, applying a match, undo. |
 | [bot.py](bot.py) | Slack handlers, the log form, message blocks, who may confirm. |
-| [standings.py](standings.py) | Weekly standings post and the daily auto-confirm sweep. |
+| [betting.py](betting.py) | Spins, fixtures, pools and settlement. No I/O beyond the store. |
+| [page.py](page.py) | The public ladder page — pure rendering, no database. |
+| [standings.py](standings.py) | Weekly standings post, payday, and the daily sweeps. |
 | [kv.py](kv.py) | Minimal Upstash Redis REST client, with pipelining. |
 | [api/index.py](api/index.py) | Vercel entry point; also serves `/debug` and `/cron/*`. |
 | [socket_mode.py](socket_mode.py) | Socket Mode entry point for local dev (no public URL). |
@@ -451,6 +455,12 @@ Slack ──▶ /slack/events ──▶ api/index.py (Flask on Vercel)
 | `tt:hist:<uid>` | list | applied match ids that player was in |
 | `tt:wk:<YYYY-Www>:delta` / `:played` | hash | this week's movement, for the weekly post |
 | `tt:standings:posted` | set | weeks already announced |
+| `tt:wallet` | hash | uid → spins |
+| `tt:sched:<id>` | string | JSON of a fixture |
+| `tt:sched:live` | set | fixtures not yet settled (and the settlement claim) |
+| `tt:bets:<id>` | hash | uid → `side:amount` |
+| `tt:ledger:<uid>` | list | recent wallet movements, for `/tt wallet` |
+| `tt:stipend:paid` | set | weeks payday has run |
 
 Races are handled with atomic claims rather than locks: `SADD` returning 1
 registers a player exactly once, and `SREM` returning 1 means exactly one of two
@@ -614,4 +624,88 @@ Most people never get round to setting their own, so an admin can do it for
 them: `/tt name @bob Bob Smith`. The player is DM'd that it happened and how to
 change it — a name is how you're shown to the whole office, and a leaderboard is
 no way to find out it changed.
+
+
+---
+
+## Betting
+
+Fixtures can be scheduled, and the channel bets on them in **spins** — play
+money, no real stakes.
+
+```
+/tt schedule @bob 6pm          →  a fixture, and a betting window
+/tt book                       →  what's open
+/tt wallet                     →  your balance and recent moves
+/tt bet 12 a 50                →  the typed route; the buttons are the usual one
+```
+
+The fixture message carries a **Back _____** button for each side. Unlike a
+match verdict, those buttons belong in the channel: anyone may bet, and only the
+players may rule on a result.
+
+### How a pot pays
+
+**Pari-mutuel** — every stake goes into one pot, and whoever backed the winner
+splits it in proportion to what they staked.
+
+```
+Pool: 400 spins
+  Sagnik  300  from 2 people   pays 1.33×
+  Bob     100  from 1 person   pays 4.00×
+
+Bob wins  →  the 100 staked on Bob takes the whole 400.
+```
+
+Nobody is the bookmaker, so **no spin is ever created or destroyed by betting**.
+Everything paid out came from someone else's stake. That's asserted directly:
+the test suite runs whole fixtures across every split, winner and rounding case
+and checks the total supply is unchanged to the last spin. Floored shares would
+quietly burn a few, so the rounding remainder goes to the largest winning stake.
+
+The consequence worth knowing: backing the obvious favourite pays least,
+because everyone else did too.
+
+| Situation | What happens |
+|---|---|
+| Draw | Every stake refunded |
+| Nobody backed the winner | Every stake refunded |
+| Everyone backed the winner | Everyone gets their own stake back |
+| Nobody logs the result within 48h | Fixture voided, every stake refunded |
+| Called off (players, organiser or an admin) | Every stake refunded |
+
+### The window
+
+It shuts the moment the match is due to start. That's enforced when a bet is
+placed, not by the cron — crons run daily, so a window left open because nothing
+had swept yet would let people bet on a match already under way. The daily sweep
+only tidies the message afterwards.
+
+The resolved start time is always echoed back (`today 18:00`, `tomorrow 09:00`),
+so `/tt schedule @bob 9am` typed in the evening visibly means tomorrow morning
+rather than silently meaning it.
+
+### Spins
+
+| | |
+|---|---|
+| Everyone starts with | **500** |
+| Every Monday | **+100**, with the standings post |
+| Smallest stake | **5** |
+
+A wallet can never go negative — stakes leave when the bet is placed and
+settlement only ever credits — so the Monday stipend alone guarantees you can
+always play again. Losing everything costs you a week, not the game. **The
+stipend is the only thing in the system that mints spins**; every other path is
+zero-sum, and there's a test that says so.
+
+### Betting on your own match
+
+Allowed, including against yourself. That's a deliberate house rule, so the only
+guard is daylight: if a player backs the side they aren't playing for, the
+fixture message names them and the amount.
+
+Worth being aware of what that permits — the result is self-reported, so
+someone can profit from a game whose score they also type in. The office is
+expected to police that, which is exactly what the visibility is for.
 

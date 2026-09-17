@@ -17,6 +17,7 @@ Everything raises ParseError with a message meant for the player, because nearly
 every way this fails has its own fix and one generic usage dump helps nobody.
 """
 import re
+from datetime import timedelta
 
 import elo
 
@@ -47,6 +48,11 @@ SUBCOMMANDS = {
     "intro": "intro", "welcome": "intro", "rules": "intro", "howto": "intro",
     "name": "name", "callme": "name", "rename": "name",
     "nudge": "nudge", "askall": "nudge",
+    "schedule": "schedule", "sched": "schedule", "fixture": "schedule",
+    "challenge": "schedule",
+    "bet": "bet", "stake": "bet", "back": "bet",
+    "wallet": "wallet", "balance": "wallet", "spins": "wallet", "purse": "wallet",
+    "book": "book", "bets": "book", "fixtures": "book", "upcoming": "book",
     # `form` and a bare `log` both open the guided modal.
     "form": "log", "new": "log",
     "help": "help", "h": "help", "usage": "help",
@@ -192,3 +198,72 @@ def parse_odds(text, caller=None, bot_id=None):
     side_a, side_b = _sides(_tokenize(text, exclude=bot_id), caller)
     validate_sides(side_a, side_b)
     return side_a, side_b
+
+
+# --- when a scheduled match starts ----------------------------------------
+
+RELATIVE_RE = re.compile(
+    r"\bin\s+(\d{1,3})\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours)\b", re.I)
+CLOCK_12_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\b", re.I)
+CLOCK_24_RE = re.compile(r"\b(\d{1,2}):(\d{2})\b")
+
+DEFAULT_LEAD_MINUTES = 30
+MAX_LEAD_DAYS = 14
+
+
+def parse_when(text, now):
+    """When a scheduled match starts. Returns (datetime, matched_text) or
+    (None, "").
+
+    Understands "in 20m", "in 2h", "6pm", "6:30pm" and "18:30". A clock time
+    already past rolls to tomorrow, so `/tt schedule @bob 9am` typed in the
+    evening means the morning — and the resolved time is always echoed back, so
+    a wrong guess is visible rather than silent.
+    """
+    text = text or ""
+    m = RELATIVE_RE.search(text)
+    if m:
+        size = int(m.group(1))
+        unit = m.group(2).lower()
+        delta = timedelta(hours=size) if unit.startswith("h") else timedelta(minutes=size)
+        return now + delta, m.group(0)
+
+    m = CLOCK_12_RE.search(text)
+    if m:
+        hour = int(m.group(1)) % 12
+        if m.group(3).lower() == "p":
+            hour += 12
+        return _next_occurrence(now, hour, int(m.group(2) or 0)), m.group(0)
+
+    m = CLOCK_24_RE.search(text)
+    if m:
+        hour, minute = int(m.group(1)), int(m.group(2))
+        if hour < 24 and minute < 60:
+            return _next_occurrence(now, hour, minute), m.group(0)
+    return None, ""
+
+
+def _next_occurrence(now, hour, minute):
+    when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return when + timedelta(days=1) if when <= now else when
+
+
+def parse_schedule(text, caller=None, bot_id=None, now=None):
+    """`/tt schedule @bob 6pm` → (side_a, side_b, when).
+
+    Same side rules as logging a session, so `@partner vs @dan @eve` works here
+    too. With no time given it assumes half an hour, which is about how long it
+    takes to walk to the table.
+    """
+    when, matched = parse_when(text, now)
+    without_time = text.replace(matched, " ") if matched else text
+    side_a, side_b = _sides(_tokenize(without_time, exclude=bot_id), caller)
+    validate_sides(side_a, side_b)
+    if when is None:
+        when = now + timedelta(minutes=DEFAULT_LEAD_MINUTES)
+    if when <= now:
+        raise ParseError("That's already past. Try `in 30m`, `6pm`, or `18:30`.")
+    if when - now > timedelta(days=MAX_LEAD_DAYS):
+        raise ParseError(f"That's more than {MAX_LEAD_DAYS} days out — "
+                         "schedule it nearer the time.")
+    return side_a, side_b, when

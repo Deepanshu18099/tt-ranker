@@ -30,6 +30,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
 log = logging.getLogger("tt-ranker")
 
+import betting
 import elo
 import kv
 import parsing
@@ -340,6 +341,7 @@ def _record_as_admin(record, admin, channel, client, bot_id=None, logger=None):
         store.drop_pending(record["id"])
         (logger or log).exception("admin apply of %s failed", record["id"])
         return ":x: Something went wrong rating that session — try again in a moment."
+    _settle_bets(blob, client, logger=logger)
     try:
         client.chat_postMessage(channel=channel, blocks=applied_blocks(blob),
                                 text=f"Session recorded by <@{admin}>.")
@@ -548,6 +550,7 @@ def handle_confirm(body, client, respond, logger=None):
         return
     _settle_everywhere(client, blob, applied_blocks(blob), "Session confirmed.",
                        body=body, respond=respond, logger=logger)
+    _settle_bets(blob, client, logger=logger)
     _note_if_ephemeral(body, respond, f":white_check_mark: Settled `#{mid}`.")
 
 
@@ -812,9 +815,12 @@ not just who won.
 You can't climb by farming one weak opponent: each win against them earns less \
 than the last, and it drags their rating down to meet yours.
 
+*Fancy a flutter?*
+`/tt schedule @opponent 6pm` puts a fixture up and the channel bets on it with {betting.CURRENCY} — play money, {betting.START_SPINS} to start and {betting.WEEKLY_STIPEND} more every Monday. Everyone who backed the winner splits the pot, so backing the obvious favourite pays least. Betting shuts the moment the match is due.
+
 *The commands*
 `/tt board` the ladder · `/tt me` your card · `/tt history` recent results
-`/tt odds @someone` who's favoured · `/tt help` everything else
+`/tt book` open fixtures · `/tt wallet` your {betting.CURRENCY} · `/tt help` the rest
 
 _Anyone who joins this channel is added automatically. \
 {PLACEMENT_GAMES} games to appear on the board._
@@ -1237,6 +1243,14 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_name(command, respond, client, context, logger=logger)
         elif sub == "nudge":
             handle_nudge(command, respond, client, logger=logger)
+        elif sub == "schedule":
+            handle_schedule(command, respond, client, bot_id, logger=logger)
+        elif sub == "bet":
+            handle_bet(command, respond, client, bot_id, logger=logger)
+        elif sub == "wallet":
+            handle_wallet(command, respond)
+        elif sub == "book":
+            handle_book(command, respond)
         else:
             respond(HELP)
     except Exception:
@@ -1268,6 +1282,9 @@ def build_app(process_before_response=False, token_verification=True):
     app.action(DISPUTE_ACTION)(_wrap_action(handle_dispute))
     app.view(LOG_MODAL)(handle_log_modal)
     app.shortcut(LOG_SHORTCUT)(handle_log_shortcut)
+    app.action(BET_ACTION)(_wrap_action(handle_bet_button))
+    app.action(CANCEL_FIXTURE_ACTION)(_wrap_action(handle_cancel_fixture))
+    app.view(BET_MODAL)(handle_bet_modal)
     app.event("member_joined_channel")(handle_member_joined)
     return app
 
@@ -1286,3 +1303,395 @@ def _wrap_action(fn):
             (logger or log).exception("action %s failed", fn.__name__)
             _only_you(respond, ":x: Something went wrong — try again in a moment.")
     return listener
+
+
+# --- betting ---------------------------------------------------------------
+
+BET_ACTION = "tt_bet"
+BET_MODAL = "tt_bet_modal"
+CANCEL_FIXTURE_ACTION = "tt_fixture_cancel"
+
+
+def fmt_spins(n):
+    return f"{n:,} {betting.CURRENCY}"
+
+
+def fmt_when(record, now=None):
+    """"today 18:00" / "Thu 18:00" — the resolved time, always echoed back so a
+    misread "9am" is visible rather than a surprise."""
+    when = betting.starts_at(record)
+    if not when:
+        return "soon"
+    now = (now or store.now_ist()).astimezone(store.IST)
+    when = when.astimezone(store.IST)
+    if when.date() == now.date():
+        return f"today {when:%H:%M}"
+    if (when.date() - now.date()).days == 1:
+        return f"tomorrow {when:%H:%M}"
+    return f"{when:%a %-d %b, %H:%M}"
+
+
+def fixture_blocks(record, now=None):
+    """The channel post for a scheduled match: who's playing, the pot, and — while
+    the window is open — the buttons to stake on either side.
+
+    Betting buttons *do* belong in the channel, unlike a match verdict: anyone
+    may back a fixture, and only the people in it may rule on a result.
+    """
+    sid = record["id"]
+    pot = betting.pool(sid)
+    a, b = fmt_side(record["side_a"]), fmt_side(record["side_b"])
+    state = record.get("state")
+
+    head = f":table_tennis_paddle_and_ball: *{a}*  vs  *{b}*"
+    if state == "open":
+        head += f"\n{fmt_when(record, now)} · betting closes at the first serve"
+    elif state == "closed":
+        head += f"\n{fmt_when(record, now)} · *betting closed* — waiting on the result"
+    blocks = [_section(head)]
+    if record.get("note"):
+        blocks.append(_context(record["note"]))
+
+    if state in ("open", "closed"):
+        blocks.append(_section(pool_line(record, pot)))
+        against = betting.backing_against_self(record)
+        if against:
+            # Allowed by house rule. The guard is that everyone can see it.
+            who = ", ".join(f"<@{u}> ({fmt_spins(n)})" for u, n in against)
+            blocks.append(_context(f":eyes: Backing the other side of their own "
+                                   f"match: {who}"))
+    if state == "open":
+        blocks.append({"type": "actions", "block_id": f"tt_fixture_{sid}", "elements": [
+            _button(BET_ACTION, f"Back {plain_side(record['side_a'])}", f"{sid}:a",
+                    style="primary"),
+            _button(BET_ACTION, f"Back {plain_side(record['side_b'])}", f"{sid}:b"),
+            _button(CANCEL_FIXTURE_ACTION, "Call it off", sid),
+        ]})
+    blocks.append(_context(f"Fixture `#{sid}` · set up by <@{record['created_by']}> · "
+                           f"`/tt bet {sid} a 50` also works"))
+    return blocks
+
+
+def plain_side(uids):
+    """A button label can't render a mention, so use whatever name we have."""
+    names = store.names()
+    return " & ".join(names.get(u) or f"@{u[-4:]}" for u in uids)[:70]
+
+
+def pool_line(record, pot=None):
+    """The pot, each side's share, and what a stake returns if it settled now."""
+    pot = pot or betting.pool(record["id"])
+    if not pot["total"]:
+        chance_a, chance_b = betting.elo_odds(record)
+        return (f"_Nothing staked yet. The ladder makes it "
+                f"{round(100 * chance_a)}% / {round(100 * chance_b)}% — "
+                f"first in takes the lot._")
+    rows = []
+    for side, uids in (("a", record["side_a"]), ("b", record["side_b"])):
+        staked = pot[side]
+        backers = pot[f"backers_{side}"]
+        ret = betting.projected(pot, side)
+        pays = f"pays *{ret:.2f}×*" if ret else "_no takers — pays the lot_"
+        rows.append(f"*{fmt_side(uids)}* — {fmt_spins(staked)} "
+                    f"from {backers} · {pays}")
+    return (f":moneybag: *{fmt_spins(pot['total'])}* in the pot\n" + "\n".join(rows))
+
+
+def handle_schedule(command, respond, client, bot_id=None, logger=None):
+    """`/tt schedule @bob 6pm` — a fixture, and a betting window that shuts when
+    it starts."""
+    caller = command["user_id"]
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    now = store.now_ist()
+    try:
+        side_a, side_b, when = parsing.parse_schedule(rest, caller=caller,
+                                                      bot_id=bot_id, now=now)
+    except parsing.ParseError as e:
+        respond(f":warning: {e}")
+        return
+
+    record = betting.schedule(side_a, side_b, when, created_by=caller,
+                              channel=command["channel_id"], now=now)
+    try:
+        resp = client.chat_postMessage(
+            channel=command["channel_id"], blocks=fixture_blocks(record, now),
+            text=f"{plain_side(side_a)} vs {plain_side(side_b)}, {fmt_when(record, now)}.")
+    except Exception as e:
+        betting.void(record, "could not be posted", now)
+        betting.claim(record["id"])
+        (logger or log).warning("could not post fixture: %s", e)
+        respond(":warning: I couldn't post in this channel — invite me here and try again.")
+        return
+    record["ts"] = resp["ts"]
+    record["channel"] = resp["channel"]
+    betting.save(record)
+
+
+def handle_bet(command, respond, client=None, bot_id=None, logger=None):
+    """`/tt bet 12 a 50` — the typed route; the buttons are the usual one."""
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    parts = rest.split()
+    if len(parts) < 3:
+        respond(":warning: `/tt bet <fixture> <side> <amount>` — e.g. `/tt bet 12 a 50`. "
+                "`/tt book` lists what's open.")
+        return
+    sid, side, amount = parts[0].lstrip("#"), parts[1].lower(), parts[2]
+    record = betting.get(sid)
+    if not record:
+        respond(f":grey_question: No fixture `#{sid}`. `/tt book` lists what's open.")
+        return
+    if side in ("1", "a", "left", "first"):
+        side = "a"
+    elif side in ("2", "b", "right", "second"):
+        side = "b"
+    else:
+        respond(":warning: Which side — `a` or `b`? `/tt book` shows who's who.")
+        return
+    _take_bet(record, command["user_id"], side, amount, respond, client, logger)
+
+
+def _take_bet(record, uid, side, amount, respond, client=None, logger=None):
+    ok, message = betting.place_bet(record, uid, side, amount)
+    if not ok:
+        _refresh_fixture(record, client, logger=logger)  # it may have just closed
+        respond(f":warning: {message}")
+        return
+    respond(f":moneybag: {message}  Balance: *{fmt_spins(betting.balance(uid))}*.")
+    _refresh_fixture(record, client, logger=logger)
+
+
+def _refresh_fixture(record, client, now=None, logger=None):
+    """Repaint the fixture message so the pot on screen is the pot in the pool."""
+    if not (client and record.get("channel") and record.get("ts")):
+        return
+    try:
+        client.chat_update(channel=record["channel"], ts=record["ts"],
+                           blocks=fixture_blocks(record, now),
+                           text="Table tennis fixture.")
+    except Exception as e:
+        (logger or log).warning("fixture %s refresh failed: %s", record["id"], e)
+
+
+def handle_bet_button(body, client, respond, logger=None):
+    """Opens the stake modal. The side rides in the button value."""
+    sid, _, side = _action_value(body).partition(":")
+    record = betting.get(sid)
+    if not record:
+        _only_you(respond, ":information_source: That fixture has gone.")
+        return
+    if betting.close_if_due(record):
+        _refresh_fixture(record, client, logger=logger)
+    if record["state"] != "open":
+        _only_you(respond, ":lock: Betting on that one has closed.")
+        return
+    uid = body["user"]["id"]
+    betting.ensure_wallets([uid])
+    try:
+        client.views_open(trigger_id=body["trigger_id"],
+                          view=bet_modal(record, side, betting.balance(uid)))
+    except Exception as e:
+        (logger or log).warning("bet modal failed: %s", e)
+        _only_you(respond, f":warning: Couldn't open the form — "
+                           f"`/tt bet {sid} {side} 50` works too.")
+
+
+def bet_modal(record, side, held):
+    uids = record["side_a"] if side == "a" else record["side_b"]
+    pot = betting.pool(record["id"])
+    ret = betting.projected(pot, side)
+    hint = (f"Pays {ret:.2f}× if it settled now. You have {held} {betting.CURRENCY}."
+            if ret else
+            f"Nobody's on this side yet — you'd take the lot. "
+            f"You have {held} {betting.CURRENCY}.")
+    return {
+        "type": "modal",
+        "callback_id": BET_MODAL,
+        "private_metadata": f"{record['id']}:{side}",
+        "title": {"type": "plain_text", "text": "Place a bet"},
+        "submit": {"type": "plain_text", "text": "Stake it"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            _section(f"Backing *{plain_side(uids)}* in fixture `#{record['id']}`."),
+            {"type": "input", "block_id": "amount",
+             "label": {"type": "plain_text", "text": f"How many {betting.CURRENCY}?"},
+             "hint": {"type": "plain_text", "text": hint},
+             "element": {"type": "plain_text_input", "action_id": "v",
+                         "placeholder": {"type": "plain_text", "text": "50"}}},
+        ],
+    }
+
+
+def handle_bet_modal(ack, body, view, client=None, logger=None):
+    sid, _, side = (view.get("private_metadata") or "").partition(":")
+    record = betting.get(sid)
+    if not record:
+        ack(response_action="errors", errors={"amount": "That fixture has gone."})
+        return
+    raw = (_modal_value(view["state"]["values"], "amount") or "").strip()
+    try:
+        amount = int(raw.replace(",", ""))
+    except ValueError:
+        ack(response_action="errors",
+            errors={"amount": f"A whole number of {betting.CURRENCY}, like 50."})
+        return
+    uid = body["user"]["id"]
+    ok, message = betting.place_bet(record, uid, side, amount)
+    if not ok:
+        ack(response_action="errors", errors={"amount": message})
+        return
+    ack()
+    _refresh_fixture(record, client, logger=logger)
+    _dm(client, uid, f":moneybag: {message}  "
+                     f"Balance: *{fmt_spins(betting.balance(uid))}*.", logger=logger)
+
+
+def handle_cancel_fixture(body, client, respond, logger=None):
+    """Call a fixture off and hand every stake back."""
+    sid = _action_value(body)
+    record = betting.get(sid)
+    if not record:
+        _only_you(respond, ":information_source: That fixture has gone.")
+        return
+    user = body["user"]["id"]
+    allowed = set(record["side_a"] + record["side_b"] + [record["created_by"]])
+    if user not in allowed and not is_admin(user):
+        _only_you(respond, ":lock: Only the players or whoever set it up can call it off.")
+        return
+    if not betting.claim(sid):
+        _only_you(respond, ":information_source: That one is already settled.")
+        return
+    refunded = betting.pool(sid)["total"]
+    betting.void(record, f"called off by <@{user}>")
+    blocks = [
+        _section(f":no_entry_sign: ~{fmt_side(record['side_a'])} vs "
+                 f"{fmt_side(record['side_b'])}~ — called off."),
+        _context(f"Called off by <@{user}>."
+                 + (f" {fmt_spins(refunded)} refunded." if refunded else "")),
+    ]
+    _refresh_with(record, client, blocks, "Fixture called off.", logger=logger)
+
+
+def _refresh_with(record, client, blocks, text, logger=None):
+    if not (client and record.get("channel") and record.get("ts")):
+        return
+    try:
+        client.chat_update(channel=record["channel"], ts=record["ts"],
+                           blocks=blocks, text=text)
+    except Exception as e:
+        (logger or log).warning("fixture %s update failed: %s", record["id"], e)
+
+
+def _settle_bets(blob, client, logger=None):
+    """Settle any fixture this session decided, without ever risking the result.
+
+    The rating is already written by the time this runs; a wallet problem must
+    not turn a confirmed match into an error the player sees.
+    """
+    try:
+        return settle_fixture_for(blob, client, logger=logger)
+    except Exception:
+        (logger or log).exception("settling bets for match %s failed", blob.get("id"))
+        return None
+
+
+def settle_fixture_for(blob, client, now=None, logger=None):
+    """Settle the fixture a just-confirmed session decided, if there was one.
+
+    Matched on the players alone, so nobody has to quote a fixture id when they
+    log the result — the thing people forget is exactly the thing that would
+    strand a pot.
+    """
+    record = betting.find_for_result(blob["side_a"], blob["side_b"])
+    if not record or not betting.claim(record["id"]):
+        return None
+    winner = betting.winner_from(record, blob["side_a"], blob["games_a"], blob["games_b"])
+    pot = betting.pool(record["id"])
+    settled = betting.settle(record, winner, match_id=blob["id"], now=now)
+    _refresh_with(settled, client, settled_fixture_blocks(settled, pot),
+                  "Fixture settled.", logger=logger)
+    for uid, paid in (settled.get("payouts") or {}).items():
+        staked = (settled.get("staked") or {}).get(uid, 0)
+        _dm(client, uid, _settlement_note(settled, uid, staked, paid), logger=logger)
+    return settled
+
+
+def _settlement_note(record, uid, staked, paid):
+    net = paid - staked
+    head = f"Fixture `#{record['id']}` settled."
+    if record["winner"] == "draw":
+        return (f":moneybag: {head} It was a draw — your {fmt_spins(staked)} "
+                "came back.")
+    if not paid:
+        return (f":chart_with_downwards_trend: {head} Your {fmt_spins(staked)} "
+                f"went to the other side. Balance: *{fmt_spins(betting.balance(uid))}*.")
+    if net == 0:
+        return (f":moneybag: {head} Nobody backed the winner, so your "
+                f"{fmt_spins(staked)} came back.")
+    return (f":tada: {head} You staked {fmt_spins(staked)} and took back "
+            f"*{fmt_spins(paid)}* — up {fmt_spins(net)}. "
+            f"Balance: *{fmt_spins(betting.balance(uid))}*.")
+
+
+def settled_fixture_blocks(record, pot):
+    a, b = fmt_side(record["side_a"]), fmt_side(record["side_b"])
+    winner = record.get("winner")
+    if winner == "draw":
+        head = f":table_tennis_paddle_and_ball: *{a}* drew with *{b}*"
+    else:
+        won, lost = (a, b) if winner == "a" else (b, a)
+        head = f":table_tennis_paddle_and_ball: *{won}* beat *{lost}*"
+    lines = [head]
+    paid = record.get("payouts") or {}
+    staked = record.get("staked") or {}
+    winners = sorted(((u, p - staked.get(u, 0)) for u, p in paid.items() if p),
+                     key=lambda i: -i[1])
+    if not staked:
+        lines.append("_Nobody had a stake on this one._")
+    elif winner == "draw" or all(p - staked.get(u, 0) == 0 for u, p in paid.items()):
+        lines.append(f"_Every stake refunded — {fmt_spins(sum(staked.values()))}._")
+    else:
+        lines.append(f"{fmt_spins(sum(staked.values()))} in the pot.")
+        for uid, net in winners[:8]:
+            lines.append(f"<@{uid}>  +{fmt_spins(net)}")
+    return [_section("\n".join(lines)),
+            _context(f"Fixture `#{record['id']}` · settled from match "
+                     f"`#{record.get('match_id') or '?'}`")]
+
+
+def handle_wallet(command, respond):
+    uid = command["user_id"]
+    betting.ensure_wallets([uid])
+    held = betting.balance(uid)
+    lines = [f":moneybag: You have *{fmt_spins(held)}*."]
+    entries = betting.ledger(uid, limit=6)
+    if entries:
+        lines.append("")
+        for entry in entries:
+            sign = "+" if entry["delta"] > 0 else ""
+            lines.append(f"`{sign}{entry['delta']:>5}`  {entry['reason']}  "
+                         f"_{fmt_ago(entry['at'])}_")
+    else:
+        lines.append(f"_Everyone starts with {fmt_spins(betting.START_SPINS)}, "
+                     f"plus {fmt_spins(betting.WEEKLY_STIPEND)} every Monday._")
+    lines.append("\n_`/tt book` for what's open to bet on._")
+    respond("\n".join(lines))
+
+
+def handle_book(command, respond):
+    """Everything with a betting window open or a result outstanding."""
+    records = [r for r in betting.live() if r.get("state") in ("open", "closed")]
+    for record in records:
+        betting.close_if_due(record)
+    if not records:
+        respond(":date: Nothing scheduled. `/tt schedule @opponent 6pm` opens one.")
+        return
+    lines = [":date: *The book*"]
+    for record in records:
+        pot = betting.pool(record["id"])
+        shut = "open" if record["state"] == "open" else "closed"
+        lines.append(
+            f"`#{record['id']}`  {fmt_side(record['side_a'])} vs "
+            f"{fmt_side(record['side_b'])} · {fmt_when(record)} · {shut} · "
+            f"{fmt_spins(pot['total'])} in the pot")
+    lines.append(f"\n_Balance: *{fmt_spins(betting.balance(command['user_id']))}*._")
+    respond("\n".join(lines))

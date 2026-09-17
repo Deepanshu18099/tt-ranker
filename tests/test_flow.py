@@ -12,7 +12,7 @@ import standings
 import store
 from tests.fake_kv import FakeRedis
 
-A, B, C, D = "U0AAA1", "U0BBB1", "U0CCC1", "U0DDD1"
+A, B, C, D, E = "U0AAA1", "U0BBB1", "U0CCC1", "U0DDD1", "U0EEE1"
 BOT = "U0BOT01"
 
 
@@ -89,6 +89,13 @@ def dm_to(client, uid):
         if c.kwargs.get("channel") == uid:
             return c
     return None
+
+
+def dm_text(client, uid):
+    """What one person's most recent DM said."""
+    call = dm_to(client, uid)
+    return "" if call is None else json.dumps(call.kwargs, default=str,
+                                              ensure_ascii=False)
 
 
 def buttons_in(call):
@@ -1239,3 +1246,222 @@ def test_no_dangling_link_text_without_a_url(fake, client, monkeypatch):
     for var in ("TT_PUBLIC_URL", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"):
         monkeypatch.delenv(var, raising=False)
     assert "Live ladder" not in said(run("board", client))
+
+
+# --- betting, end to end ---------------------------------------------------
+
+import betting  # noqa: E402
+
+
+def fixture_id(client):
+    """The fixture id carried by the Back buttons on the message just posted."""
+    for call in reversed(posts(client)):
+        for b in call.kwargs.get("blocks") or []:
+            if str(b.get("block_id", "")).startswith("tt_fixture_"):
+                return b["block_id"].removeprefix("tt_fixture_")
+    raise AssertionError("no fixture message was posted")
+
+
+def back(client, sid, user, side, amount):
+    """Stake through the modal, the way the buttons do."""
+    ack = MagicMock()
+    bot.handle_bet_modal(ack, {"user": {"id": user}},
+                         {"private_metadata": f"{sid}:{side}",
+                          "state": {"values": {"amount": {"v": {"value": str(amount)}}}}},
+                         client=client)
+    return ack
+
+
+def play_and_confirm(client, opponent, games="21-14 21-16", user=A, by=None):
+    run(f"log <@{opponent}> {games}", client, user=user)
+    press(bot.handle_confirm, posted_mid(client), by or opponent, client)
+
+
+def test_scheduling_posts_a_fixture_with_both_sides_to_back(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    posted = said(client.chat_postMessage)
+    assert f"<@{A}>" in posted and f"<@{B}>" in posted
+    assert buttons_in(channel_post(client)).count(bot.BET_ACTION) == 2
+
+
+def test_a_fixture_states_the_time_it_resolved_to(fake, client):
+    """Always echoed back, so a misread "9am" is visible rather than a surprise."""
+    run(f"schedule <@{B}> 6pm", client)
+    assert "18:00" in said(client.chat_postMessage)
+
+
+def test_a_stake_leaves_the_wallet_and_shows_in_the_pot(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 50)
+    assert betting.balance(C) == betting.START_SPINS - 50
+    assert betting.pool(sid)["a"] == 50
+    assert "50" in said(client.chat_update)          # the message repainted
+
+
+def test_the_pot_and_projected_return_are_shown(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 300)
+    back(client, sid, D, "b", 100)
+    shown = said(client.chat_update)
+    assert "400" in shown and "4.00×" in shown       # 400 pot, b pays 4x
+
+
+def test_a_bad_amount_comes_back_on_the_field(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    ack = back(client, fixture_id(client), C, "a", "loads")
+    assert ack.call_args.kwargs["response_action"] == "errors"
+    assert "amount" in ack.call_args.kwargs["errors"]
+
+
+def test_staking_more_than_you_hold_is_refused_in_the_modal(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    ack = back(client, fixture_id(client), C, "a", betting.START_SPINS + 1)
+    assert ack.call_args.kwargs["response_action"] == "errors"
+    assert betting.balance(C) == betting.START_SPINS
+
+
+def test_playing_the_match_settles_the_pot(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 300)      # backs A
+    back(client, sid, D, "b", 100)      # backs B
+    play_and_confirm(client, B)         # A wins 2-0
+
+    assert betting.get(sid)["state"] == "settled"
+    assert betting.balance(C) == betting.START_SPINS + 100
+    assert betting.balance(D) == betting.START_SPINS - 100
+    assert "beat" in said(client.chat_update)
+
+
+def test_a_result_logged_the_other_way_round_still_settles_it(fake, client):
+    """Nobody quotes a fixture id when logging, so the players are the only
+    thing tying a session to a pot."""
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 100)      # backs A, side A of the fixture
+    back(client, sid, D, "b", 100)      # backs B, so there is a winning side
+    play_and_confirm(client, A, user=B, by=A)   # B logs it, and B wins
+
+    assert betting.get(sid)["winner"] == "b"
+    assert betting.balance(C) == betting.START_SPINS - 100
+    assert betting.balance(D) == betting.START_SPINS + 100
+
+
+def test_winners_are_told_what_they_took(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 300)
+    back(client, sid, D, "b", 100)
+    play_and_confirm(client, B)
+    dm = dm_text(client, C)
+    assert "took back" in dm and "400" in dm
+
+
+def test_an_unrelated_match_settles_nothing(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 100)
+    play_and_confirm(client, D)         # A vs D, not the scheduled A vs B
+    assert betting.get(sid)["state"] == "open"
+    assert betting.balance(C) == betting.START_SPINS - 100
+
+
+def test_a_broken_wallet_never_unwinds_a_confirmed_match(fake, client, monkeypatch):
+    """The rating is already written by the time bets settle."""
+    run(f"schedule <@{B}> in 2h", client)
+    back(client, fixture_id(client), C, "a", 50)
+    monkeypatch.setattr(betting, "settle", MagicMock(side_effect=RuntimeError("boom")))
+    play_and_confirm(client, B)
+    assert fake.rating(A) > elo.START_RATING        # the match still counted
+
+
+def test_calling_a_fixture_off_refunds_everyone(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 300)
+    back(client, sid, D, "b", 100)
+
+    body = {"user": {"id": A}, "actions": [{"value": sid}],
+            "container": {"channel_id": "C1", "message_ts": "1"}}
+    bot.handle_cancel_fixture(body, client, MagicMock())
+
+    assert betting.get(sid)["state"] == "void"
+    assert betting.balance(C) == betting.balance(D) == betting.START_SPINS
+    assert "called off" in said(client.chat_update)
+
+
+def test_only_the_players_or_the_organiser_can_call_it_off(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    respond = MagicMock()
+    bot.handle_cancel_fixture({"user": {"id": E}, "actions": [{"value": sid}],
+                               "container": {}}, client, respond)
+    assert "Only the players" in said(respond)
+    assert betting.get(sid)["state"] == "open"
+
+
+def test_backing_your_own_opponent_is_allowed_but_shown(fake, client):
+    """House rule says anything goes, so the guard is daylight."""
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, A, "b", 50)       # A is playing, and backs B
+    assert betting.balance(A) == betting.START_SPINS - 50
+    assert "Backing the other side of their own match" in said(client.chat_update)
+
+
+def test_the_window_shuts_once_the_match_is_due(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    record = betting.get(sid)
+    record["starts_at"] = store.stamp(store.now_ist() - timedelta(minutes=1))
+    betting.save(record)
+
+    ack = back(client, sid, C, "a", 50)
+    assert ack.call_args.kwargs["response_action"] == "errors"
+    assert betting.balance(C) == betting.START_SPINS
+    assert betting.get(sid)["state"] == "closed"
+
+
+def test_the_sweep_refunds_a_fixture_nobody_ever_reported(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 80)
+    later = store.now_ist() + timedelta(hours=betting.ABANDON_HOURS + 3)
+
+    result = standings.sweep_fixtures(client, now=later)
+    assert sid in result["refunded"]
+    assert betting.balance(C) == betting.START_SPINS
+    assert betting.get(sid)["state"] == "void"
+
+
+def test_the_wallet_command_shows_the_balance_and_recent_moves(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    back(client, fixture_id(client), A, "a", 50)
+    shown = said(run("wallet", client))
+    assert str(betting.START_SPINS - 50) in shown and "stake on" in shown
+
+
+def test_the_book_lists_what_is_open(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    back(client, sid, C, "a", 75)
+    shown = said(run("book", client))
+    assert f"#{sid}" in shown and "75" in shown
+
+
+def test_the_book_when_nothing_is_scheduled(fake, client):
+    assert "Nothing scheduled" in said(run("book", client))
+
+
+def test_betting_by_command_works_too(fake, client):
+    run(f"schedule <@{B}> in 2h", client)
+    sid = fixture_id(client)
+    respond = run(f"bet {sid} a 60", client, user=C)
+    assert betting.balance(C) == betting.START_SPINS - 60
+    assert "Balance" in said(respond)
+
+
+def test_a_bet_on_a_fixture_that_does_not_exist(fake, client):
+    assert "No fixture" in said(run("bet 999 a 50", client))
