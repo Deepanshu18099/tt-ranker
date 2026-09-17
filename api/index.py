@@ -126,9 +126,12 @@ def _render_ladder():
         log.exception("name refresh failed; rendering with what we have")
 
     players = store.all_players()
+    view = request.args.get("view", "")
+    if view not in dict(page.VIEWS):
+        view = ""
     week_delta, week_played = store.week_movement()
     body = page.render(
-        players=players,
+        players=store.singles_players(players) if view == "singles" else players,
         names=store.names(),
         recent=store.recent_matches(limit=8),
         week_delta=week_delta,
@@ -136,6 +139,7 @@ def _render_ladder():
         placement_games=bot.PLACEMENT_GAMES,
         channel_hint=os.environ.get("TT_CHANNEL_NAME", ""),
         updated=store.now_ist().strftime("%H:%M IST"),
+        view=view,
     )
     # Let a CDN hold it briefly so a channel-wide click doesn't become a
     # thundering herd, while staying fresh enough to feel live.

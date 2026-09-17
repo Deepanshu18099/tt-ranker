@@ -44,7 +44,7 @@ Everything is one slash command, `/tt`.
 | `/tt log @bob 11-7 9-11 11-5` | Log singles — you against Bob, any number of games |
 | `/tt log @partner vs @dan @eve 11-7 11-9` | Doubles. `vs` splits the sides |
 | `/tt log @ann @bob vs @cal @dee 11-7 11-9` | Record a session you weren't in |
-| `/tt board` | The ladder |
+| `/tt board` · `/tt board singles` | The ladder · singles only |
 | `/tt me` · `/tt me @bob` | One player's card — rating, record, streak, peak |
 | `/tt history` · `/tt history @bob` | Recent results |
 | `/tt pending` | Sessions still waiting on confirmation |
@@ -145,6 +145,28 @@ moment they log them, and can confirm or throw out anybody else's pending
 session — the only way to clear one whose players have gone quiet, short of
 waiting for the daily sweep. The result still says *recorded by @them* 🛡, so
 skipping the confirmation is visible to the channel rather than silent.
+
+### Two ladders
+
+`/tt board` counts everything. **`/tt board singles`** counts only singles, and
+the ladder page has a tab for each (`?view=singles`).
+
+Singles gets its **own Elo**, not the overall rating with doubles filtered out —
+the history that produced the overall number still has doubles in it. The two
+are updated side by side: a singles result moves both, a doubles result moves
+only the overall one.
+
+The reason is worth stating, because it's structural rather than a preference. A
+doubles result is **one number split between two people**. Both partners move by
+the same amount, so the maths never learns who did what — and for someone who
+only ever partners the same person, only the *pair's total* is determined, never
+the split. Simulated against the real `elo.py`, a true-700 player who always
+partners a 1300 settles around **910**, while their partner is dragged down to
+**1210**. It isn't points from nowhere; it's a transfer from the stronger player.
+Playing with varied partners, or any singles at all, collapses it.
+
+So doubles still counts on the overall board — it's a real result and the whole
+pair earned it — but there's now a board where it can't reach.
 
 ### Joining
 

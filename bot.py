@@ -1019,6 +1019,8 @@ def handle_me(command, respond, bot_id=None):
     decided = player["wins"] + player["losses"]
     rate = f" ({round(100 * player['wins'] / decided)}%)" if decided else ""
     rank, total = _rank_of(uid)
+    singles = store.singles_view(player)
+    singles_games = elo.games_played(singles)
     lines = [
         f":table_tennis_paddle_and_ball: *<@{uid}>* — *{player['rating']}*"
         + (f"   ·   #{rank} of {total}" if rank else "   ·   _still placing_"),
@@ -1029,6 +1031,12 @@ def handle_me(command, respond, bot_id=None):
         f"*Peak*  {player['peak']}   ·   *Streak*  {fmt_streak(player['streak'])}"
         + (f"   ·   *Best*  {player['best_streak']}" if player["best_streak"] > 1 else ""),
     ]
+    if singles_games:
+        lines.append(f"*Singles*  {singles['rating']}  ·  "
+                     f"{singles['wins']}-{singles['losses']}  ·  "
+                     f"{singles_games} game{'s' if singles_games != 1 else ''}"
+                     + ("" if singles_games >= PLACEMENT_GAMES
+                        else "  _(not yet on the singles board)_"))
     if played < PLACEMENT_GAMES:
         left = PLACEMENT_GAMES - played
         lines.append(f"_{left} more game{'s' if left > 1 else ''} to join the ladder._")
@@ -1056,8 +1064,10 @@ def ranked_players(players):
                                             -elo.games_played(item[1]), item[0]))
 
 
-def board_text(players, limit=BOARD_LIMIT, title="Table tennis ladder"):
-    """The leaderboard, shared by `/tt board` and the weekly post."""
+def board_text(players, limit=BOARD_LIMIT, title="Table tennis ladder", view=""):
+    """The leaderboard, shared by `/tt board`, the singles board and the weekly
+    post. `players` is already the right record set — pass singles views in for a
+    singles board."""
     if not players:
         return (f":table_tennis_paddle_and_ball: *{title}*\n"
                 "_Nobody has registered yet — `/tt register` to start it off._")
@@ -1078,15 +1088,44 @@ def board_text(players, limit=BOARD_LIMIT, title="Table tennis ladder"):
                       if elo.games_played(p) < PLACEMENT_GAMES),
                      key=lambda item: (-elo.games_played(item[1]), item[0]))
     if placing:
+        what = "singles games" if view == "singles" else "games"
         who = ", ".join(f"<@{u}> ({elo.games_played(p)})" for u, p in placing[:10])
-        lines.append(f"\n_Still placing ({PLACEMENT_GAMES} games to qualify): {who}_")
+        lines.append(f"\n_Still placing ({PLACEMENT_GAMES} {what} to qualify): {who}_")
+    if view == "singles":
+        lines.append("_Singles only — its own rating, untouched by doubles. "
+                     "`/tt board` for everything._")
+    elif view == "overall":
+        lines.append("_Singles and doubles together. `/tt board singles` for "
+                     "singles only._")
     return "\n".join(lines)
 
 
-def handle_board(respond):
+SINGLES_WORDS = ("singles", "single", "solo", "1v1")
+DOUBLES_WORDS = ("doubles", "double", "2v2", "pairs")
+
+
+def handle_board(command, respond):
+    """`/tt board` — everything. `/tt board singles` — singles only.
+
+    Two ladders rather than one filtered view: the singles board is fed by its
+    own Elo, so a doubles result has never touched the numbers on it.
+    """
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    wanted = rest.strip().lower()
+    players = store.all_players()
+    if wanted in SINGLES_WORDS:
+        text = board_text(store.singles_players(players),
+                          title="Singles ladder", view="singles")
+    elif wanted in DOUBLES_WORDS:
+        respond(":information_source: There's no doubles-only ladder — a doubles "
+                "result is one number split between two people, so it can't say "
+                "who did what. `/tt board` counts everything, `/tt board singles` "
+                "only singles.")
+        return
+    else:
+        text = board_text(players, view="overall")
     url = ladder_url()
-    respond(board_text(store.all_players())
-            + (f"\n_Live ladder: {url}_" if url else ""))
+    respond(text + (f"\n_Live ladder: {url}_" if url else ""))
 
 
 def handle_history(command, respond, bot_id=None):
@@ -1221,7 +1260,7 @@ no fixed length. The other side confirms it, then ratings move. Unconfirmed \
 results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 
 *Everything else*
-• `/tt board` — the ladder      • `/tt me [@player]` — one player's card
+• `/tt board` — the ladder    • `/tt board singles` — singles only\n• `/tt me [@player]` — one player's card
 • `/tt history [@player]` — recent results    • `/tt pending` — awaiting confirmation
 • `/tt odds @bob` — who's favoured    • `/tt undo` — revert the last match you logged
 • `/tt register` — join early    • `/tt sync` — add everyone in this channel
@@ -1297,7 +1336,7 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
         elif sub == "me":
             handle_me(command, respond, bot_id)
         elif sub == "board":
-            handle_board(respond)
+            handle_board(command, respond)
         elif sub == "history":
             handle_history(command, respond, bot_id)
         elif sub == "pending":

@@ -77,6 +77,14 @@ ol.ladder::before{content:"";position:absolute;left:1.05rem;top:0;bottom:0;
 .up{color:#3FCB86}
 .down{color:#FF7A70}
 
+/* Tabs: links, not buttons — each view is its own URL, so one can be pasted
+   into the channel and it works with no script. */
+.tabs{display:flex;gap:.35rem;margin:1.75rem 0 0;border-bottom:1px solid rgba(234,242,241,.16)}
+.tabs a{display:inline-block;padding:.5rem .85rem;color:#9FBEC6;text-decoration:none;
+  font-size:.95rem;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs a:hover{color:#EAF2F1}
+.tabs a.on{color:#EAF2F1;border-bottom-color:#EAF2F1}
+
 h2{margin:2.75rem 0 .35rem;font-size:1.05rem;font-weight:650;letter-spacing:-.01em}
 .note{margin:0 0 .9rem;color:#9FBEC6;font-size:.9rem;max-width:34rem}
 
@@ -162,10 +170,29 @@ def _streak(player):
     return ""
 
 
+VIEWS = (("", "Overall"), ("singles", "Singles"))
+
+
+def _tabs(view):
+    """One URL per view, so a tab can be pasted into the channel."""
+    links = []
+    for value, label in VIEWS:
+        on = ' class="on"' if (view or "") == value else ""
+        href = f"?view={value}" if value else "?"
+        links.append(f'<a{on} href="{_e(href)}">{label}</a>')
+    return f'<nav class="tabs">{"".join(links)}</nav>'
+
+
 def render(players, names, recent, week_delta, week_played, placement_games,
-           channel_hint="", updated=""):
+           channel_hint="", updated="", view=""):
     """The whole page. Pure — every input is passed in, so it renders in a test
-    without a database or a Slack client."""
+    without a database or a Slack client.
+
+    `players` is whichever record set the view wants: pass singles views in for
+    the singles tab. The ranking and rendering below don't know the difference,
+    which is the point of shaping a singles record like an ordinary one.
+    """
+    singles = view == "singles"
     ranked = sorted(((u, p) for u, p in players.items()
                      if elo.games_played(p) >= placement_games),
                     key=lambda i: (-i[1]["rating"], -elo.games_played(i[1]), i[0]))
@@ -175,8 +202,14 @@ def render(players, names, recent, week_delta, week_played, placement_games,
 
     parts = ['<h1>Table tennis ladder</h1>']
     parts.append(f'<p class="sub">{_headline(players, ranked, placing, names, placement_games)}</p>')
+    parts.append(_tabs(view))
+    if singles:
+        parts.append('<p class="note">Singles only, on its own rating — no '
+                     'doubles result has ever touched these numbers. A doubles '
+                     'result is one figure split between two people, so it can '
+                     "say how a pair did but not who did what.</p>")
     parts.append(_lead(ranked, placing, names, week_delta, placement_games))
-    parts.append(_rungs(ranked, names, week_delta, week_played))
+    parts.append(_rungs(ranked, names, None if singles else week_delta, week_played))
     parts.append(_placing(placing, names, placement_games))
     parts.append(_recent(recent, names))
     parts.append(_footer(placement_games, channel_hint, updated))
@@ -237,6 +270,8 @@ def _lead(ranked, placing, names, week_delta, placement_games):
 
 
 def _rungs(ranked, names, week_delta, week_played):
+    """week_delta of None means "don't show movement" — the weekly figures count
+    every game, so they would be a lie next to a singles-only rating."""
     if not ranked:
         return ""
     rows = []
@@ -247,7 +282,7 @@ def _rungs(ranked, names, week_delta, week_played):
             f'<span class="who"><span class="name">{_e(display_name(uid, names))}</span>'
             f'<span class="form">{_e(_record(player))}{_e(_streak(player))}</span></span>'
             f'<span class="score"><span class="rating num">{player["rating"]}</span>'
-            f'{_movement(week_delta.get(uid, 0), week_played.get(uid, 0))}</span>'
+            f'{_movement(week_delta.get(uid, 0), week_played.get(uid, 0)) if week_delta is not None else ""}</span>'
             "</li>")
     return '<ol class="ladder">' + "".join(rows) + "</ol>"
 

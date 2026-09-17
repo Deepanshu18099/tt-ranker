@@ -76,12 +76,28 @@ def replay(blobs):
         except (KeyError, ValueError):
             applied = store.now_ist()
 
+        # Singles carries its own Elo, so it is replayed on its own ratings
+        # rather than derived from the overall pass.
+        singles = None
+        if not rated["doubles"]:
+            def singles_entries(side):
+                return [{"uid": u,
+                         "rating": store.singles_view(state[u])["rating"],
+                         "games": elo.games_played(store.singles_view(state[u]))}
+                        for u in side]
+            singles = elo.rate_match(singles_entries(blob["side_a"]),
+                                     singles_entries(blob["side_b"]), blob["games"])
+
         snapshot = {uid: dict(state[uid]) for uid in uids}
         for side, mine, theirs in ((blob["side_a"], "a", "b"),
                                    (blob["side_b"], "b", "a")):
             for uid in side:
-                state[uid] = store._advance(state[uid], rated, mine, theirs, uid,
-                                            blob["id"], applied)
+                advanced = store._advance(state[uid], rated, mine, theirs, uid,
+                                          blob["id"], applied)
+                if singles:
+                    advanced.update(store._advance_singles(
+                        state[uid], singles, mine, theirs, uid, blob["id"], applied))
+                state[uid] = advanced
 
         week = store.week_key(applied)
         bucket = weekly.setdefault(week, {"delta": {}, "played": {}})
@@ -91,6 +107,7 @@ def replay(blobs):
 
         fresh = dict(blob)
         fresh.update(rated)
+        fresh["singles_rated"] = singles or {}
         fresh["snapshot"] = snapshot
         fresh["week"] = week
         rewritten.append(fresh)
@@ -121,12 +138,15 @@ def main(argv):
     before = store.get_players(list(state))
     names = store.names()
 
-    print(f"  {'player':<22}{'now':>7}{'after':>8}{'move':>7}")
+    print(f"  {'player':<22}{'now':>7}{'after':>8}{'move':>7}{'singles':>9}")
     for uid, player in sorted(state.items(), key=lambda i: -i[1]["rating"]):
         was = (before.get(uid) or {}).get("rating", elo.START_RATING)
         shift = player["rating"] - was
         name = names.get(uid) or f"@{uid[-4:]}"
-        print(f"  {name:<22}{was:>7}{player['rating']:>8}{shift:>+7}")
+        singles = store.singles_view(player)
+        played = elo.games_played(singles)
+        col = f"{singles['rating']}" if played else "—"
+        print(f"  {name:<22}{was:>7}{player['rating']:>8}{shift:>+7}{col:>9}")
 
     changed = sum(1 for uid, p in state.items()
                   if p["rating"] != (before.get(uid) or {}).get("rating", elo.START_RATING))
