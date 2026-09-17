@@ -198,8 +198,8 @@ def test_singles_is_the_tab_you_land_on(fake):
     """It is the honest ladder — a doubles result can't say who did what."""
     import page
     html = page.render({}, {}, [], {}, {}, 6)
-    assert '<a class="on" href="?">Singles</a>' in html
-    assert page.VIEWS[0][1] == "Singles"
+    assert '<a class="on" aria-current="page" href="?"' in html
+    assert ">Singles</a>" in html and page.VIEWS[0][1] == "Singles"
 
 
 def test_the_singles_view_explains_itself(fake):
@@ -208,15 +208,30 @@ def test_the_singles_view_explains_itself(fake):
         page.render({}, {}, [], {}, {}, 6)
 
 
-def test_weekly_movement_is_hidden_on_singles_and_shown_on_overall(fake):
-    """The weekly figures count every game, so they'd be a lie next to a
-    singles-only rating."""
+def test_the_overall_weekly_figure_never_leaks_onto_singles(fake):
+    """The weekly counters count every game, so they'd be a lie next to a
+    singles-only rating. Singles gets movement only when it can be summed from
+    singles matches — see test_the_singles_tab_moves_on_its_own_matches."""
     import page
     players = {A: dict(store.new_player(), rating=1100, games_won=10, wins=5)}
     singles = page.render(players, {A: "S"}, [], {A: 25}, {A: 4}, 6)
     overall = page.render(players, {A: "S"}, [], {A: 25}, {A: 4}, 6, view="overall")
-    assert "25 this week" in overall
-    assert "this week" not in singles
+    assert "+25" in overall
+    assert "this week" not in singles and "+25" not in singles
+
+
+def test_the_singles_tab_moves_on_its_own_matches(fake):
+    """Given the matches themselves, the singles tab sums the singles Elo out
+    of them — the overall counter is never borrowed."""
+    import page
+    players = {A: dict(store.new_player(), rating=1100, games_won=10, wins=5)}
+    history = [{"side_a": [A], "side_b": [B], "games_a": 2, "games_b": 0,
+                "doubles": False, "week": "tt:wk:2026-W38",
+                "deltas": {A: 25, B: -25},
+                "split_rated": {"deltas": {A: 9, B: -9}}}]
+    html = page.render(players, {A: "S"}, [], {A: 25}, {A: 4}, 6,
+                       history=history, week="tt:wk:2026-W38")
+    assert "+9" in html and "+25" not in html
 
 
 def test_the_singles_board_has_its_own_qualifying_bar(fake):
@@ -241,11 +256,11 @@ def test_an_old_singles_link_still_lands_on_singles(fake):
     default; those links have to keep working and light the right tab."""
     import page
     legacy = page.render({}, {}, [], {}, {}, 6, view="")     # what the route folds it to
-    assert '<a class="on" href="?">Singles</a>' in legacy
+    assert '<a class="on" aria-current="page" href="?"' in legacy
 
 
 def test_overall_is_still_reachable(fake):
     import page
     html = page.render({}, {}, [], {}, {}, 6, view="overall")
-    assert '<a class="on" href="?view=overall">Overall</a>' in html
+    assert '<a class="on" aria-current="page" href="?view=overall"' in html
     assert "no doubles result has ever touched" not in html

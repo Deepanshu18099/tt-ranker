@@ -140,6 +140,12 @@ def _rated(a, b, when):
     return store.apply_match(rec, confirmed_by=b, now=when)
 
 
+def cards(html):
+    """Just the match cards — the standings name every player whatever the
+    filter, so an unscoped `in html` would pass on the wrong thing."""
+    return html[html.index('class="matches"'):]
+
+
 def test_the_ladder_filters_by_day_and_player(app, fake):
     import store
     from datetime import timedelta
@@ -150,16 +156,203 @@ def test_the_ladder_filters_by_day_and_player(app, fake):
     _rated("U0AAA1", "U0CCC1", now)
     with patch("bot.refresh_names"):
         html = app.get("/ladder?day=today").data.decode()
-        assert "Sessions · today" in html and "1 session." in html
-        assert "beat</span><span>Cal" in html and "beat</span><span>Bob" not in html
+        assert "Matches &middot; today" in html and "1 match." in html
+        # Only the match list is filtered — the standings still name everyone —
+        # so the check looks inside the cards.
+        assert 'side-name">Cal<' in cards(html)
+        assert 'side-name">Bob<' not in cards(html)
         html = app.get("/ladder?player=U0BBB1").data.decode()
-        assert "Sessions · Bob" in html and "beat</span><span>Bob" in html
-        assert "beat</span><span>Cal" not in html
+        assert "Matches &middot; Bob" in html
+        assert 'side-name">Bob<' in cards(html)
+        assert 'side-name">Cal<' not in cards(html)
 
 
 def test_bad_filter_values_fall_back_to_the_plain_list(app, fake):
     """A stale or hand-edited link must never echo its junk or 500."""
     with patch("bot.refresh_names"):
         html = app.get("/ladder?player=%3Cscript%3E&day=someday").data.decode()
-    assert "Table tennis ladder" in html and "Sessions ·" not in html
+    assert "The Ladder" in html and "Matches &middot;" not in html
     assert "someday" not in html and "&lt;script&gt;" not in html
+
+
+# --- the pages beyond the ladder -------------------------------------------
+
+PAGE_PATHS = ["/matches", "/players", "/stats", "/log"]
+
+
+@pytest.mark.parametrize("path", PAGE_PATHS)
+@pytest.mark.parametrize("prefix", ["", "/api/index"])
+def test_a_page_answers_on_either_path_vercel_may_deliver(app, fake, path, prefix):
+    """Vercel hands Flask the original path or the rewrite destination, so
+    every page is matched on the tail — the same rule /ladder lives by."""
+    with patch("bot.refresh_names"):
+        assert app.get(prefix + path).status_code == 200
+
+
+def test_a_player_page_is_found_by_id(app, fake):
+    import store
+    store.ensure_players(["U0AAA1"])
+    store.set_name("U0AAA1", "Ann")
+    with patch("bot.refresh_names"):
+        for path in ("/player/U0AAA1", "/api/index/player/U0AAA1"):
+            page = app.get(path)
+            assert page.status_code == 200 and b"Ann" in page.data
+
+
+def test_an_unknown_player_is_a_404_not_an_empty_card(app, fake):
+    with patch("bot.refresh_names"):
+        gone = app.get("/player/U0NOPE")
+    assert gone.status_code == 404 and b"Nothing here" in gone.data
+
+
+def test_an_unknown_path_is_a_404_with_a_way_back(app, fake):
+    gone = app.get("/nonsense")
+    assert gone.status_code == 404 and b"Back to the ladder" in gone.data
+
+
+def test_the_root_is_still_the_health_check(app, fake):
+    assert b"TT Ranker is running" in app.get("/").data
+
+
+def test_a_page_says_so_when_there_is_no_database(app, monkeypatch):
+    """Without the KV pair there is nowhere for a rating to live; each page
+    says which variables are missing rather than rendering an empty shell."""
+    monkeypatch.delenv("KV_REST_API_URL", raising=False)
+    monkeypatch.delenv("UPSTASH_REDIS_REST_URL", raising=False)
+    with patch("bot.refresh_names"):
+        answer = app.get("/players")
+    assert answer.status_code == 503 and b"KV_REST_API_URL" in answer.data
+
+
+def test_the_log_page_needs_no_database_at_all(app, monkeypatch):
+    monkeypatch.delenv("KV_REST_API_URL", raising=False)
+    monkeypatch.delenv("UPSTASH_REDIS_REST_URL", raising=False)
+    assert app.get("/log").status_code == 200
+
+
+def test_a_junk_filter_on_the_matches_page_degrades_to_the_plain_list(app, fake):
+    """A stale or hand-edited link must never echo its junk or 500."""
+    with patch("bot.refresh_names"):
+        html = app.get("/matches?player=%3Cscript%3E&day=someday"
+                       "&format=%3Cimg%3E").data.decode()
+    # Dropped, not echoed: neither raw nor escaped does the junk appear. (The
+    # document has a <script> of its own, so the check is for the echo.)
+    assert "&lt;script&gt;" not in html and "&lt;img&gt;" not in html
+    assert "<img>" not in html and "MATCHES" in html.upper()
+
+
+def test_a_junk_opponent_on_a_profile_falls_back(app, fake):
+    import store
+    store.ensure_players(["U0AAA1"])
+    with patch("bot.refresh_names"):
+        page = app.get("/player/U0AAA1?vs=%3Cscript%3E")
+    assert page.status_code == 200 and b"<script>alert" not in page.data
+
+
+def test_a_page_that_throws_still_answers_in_words(app, fake, monkeypatch):
+    """A broken page is a page, not a stack trace — and the trace only appears
+    when the deployment has asked for it."""
+    from web.pages import players as page_players
+    monkeypatch.setattr(page_players, "render",
+                        MagicMock(side_effect=RuntimeError("boom")))
+    with patch("bot.refresh_names"):
+        broken = app.get("/players")
+    assert broken.status_code == 500
+    assert b"That didn" in broken.data and b"boom" not in broken.data
+
+    monkeypatch.setenv("TT_SHOW_ERRORS", "1")
+    with patch("bot.refresh_names"):
+        assert b"boom" in app.get("/players").data
+
+
+# --- search, compare and the spins board -----------------------------------
+
+def test_the_players_page_filters_by_name(app, fake):
+    import store
+    store.ensure_players(["U0AAA1", "U0BBB1"])
+    store.set_name("U0AAA1", "Ann"); store.set_name("U0BBB1", "Bob")
+    with patch("bot.refresh_names"):
+        html = app.get("/players?q=ann").data.decode()
+    grid = html[html.index('class="pc-grid"'):]
+    assert "Ann" in grid and "Bob" not in grid
+
+
+def test_the_matches_page_filters_by_name(app, fake):
+    import store
+    store.set_name("U0AAA1", "Ann"); store.set_name("U0BBB1", "Bob")
+    store.set_name("U0CCC1", "Cal")
+    _rated("U0AAA1", "U0BBB1", store.now_ist())
+    _rated("U0CCC1", "U0BBB1", store.now_ist())
+    with patch("bot.refresh_names"):
+        html = app.get("/matches?q=ann").data.decode()
+    assert html.count('<article class="match"') == 1
+    assert 'side-name">Ann<' in cards(html)
+
+
+def test_a_search_term_is_never_echoed_raw(app, fake):
+    with patch("bot.refresh_names"):
+        html = app.get("/matches?q=%3Cscript%3Ealert(1)%3C/script%3E").data.decode()
+    assert "<script>alert(1)" not in html
+
+
+def test_compare_needs_two_known_players(app, fake):
+    import store
+    store.ensure_players(["U0AAA1", "U0BBB1"])
+    store.set_name("U0AAA1", "Ann"); store.set_name("U0BBB1", "Bob")
+    with patch("bot.refresh_names"):
+        assert b"Pick two players" in app.get("/compare").data
+        assert b"Pick two players" in app.get("/compare?p=U0AAA1").data
+        # An unknown id is not guessed at.
+        assert b"Pick two players" in app.get("/compare?p=U0AAA1&p=U0NOPE").data
+        both = app.get("/compare?p=U0AAA1&p=U0BBB1").data
+        assert b"Side by side" in both and b"Ann" in both and b"Bob" in both
+        # The pair of links already pasted in the channel still work.
+        assert b"Side by side" in app.get("/compare?a=U0AAA1&b=U0BBB1").data
+
+
+def test_nobody_is_compared_with_themselves(app, fake):
+    import store
+    store.ensure_players(["U0AAA1"])
+    with patch("bot.refresh_names"):
+        assert b"Pick two players" in app.get("/compare?p=U0AAA1&p=U0AAA1").data
+
+
+def test_the_popup_asks_for_the_comparison_without_the_page(app, fake):
+    """`?bare=1` is what the dialog fetches — the same render, no shell."""
+    import store
+    store.ensure_players(["U0AAA1", "U0BBB1"])
+    with patch("bot.refresh_names"):
+        bare = app.get("/compare?bare=1&p=U0AAA1&p=U0BBB1").data
+    assert b"<!doctype html>" not in bare and b"Side by side" in bare
+
+
+def test_the_players_page_carries_the_compare_mode(app, fake):
+    import store
+    store.ensure_players(["U0AAA1", "U0BBB1"])
+    with patch("bot.refresh_names"):
+        plain = app.get("/players").data
+        picking = app.get("/players?compare=1&p=U0AAA1").data
+    # The script names the class too, so the check is for the markup.
+    assert b'class="pc pc-pick' not in plain
+    assert b'class="pc pc-pick' in picking and b"is-picked" in picking
+
+
+def test_the_ladder_switches_to_the_spins_board(app, fake):
+    import betting
+    import store
+    now = store.now_ist()
+    for _ in range(4):        # enough games to reach the singles board
+        _rated("U0AAA1", "U0BBB1", now)
+    betting.ensure_wallets(["U0AAA1", "U0BBB1"])
+    betting.adjust("U0AAA1", 1000, "won a bet")
+    with patch("bot.refresh_names"):
+        ratings = app.get("/ladder").data.decode()
+        spins = app.get("/ladder?board=spins").data.decode()
+    assert "<h2>Standings</h2>" in ratings and "<h2>Spins</h2>" not in ratings
+    assert "<h2>Spins</h2>" in spins and "<h2>Standings</h2>" not in spins
+
+
+def test_a_junk_board_falls_back_to_the_ratings(app, fake):
+    with patch("bot.refresh_names"):
+        html = app.get("/ladder?board=%3Cscript%3E").data.decode()
+    assert "<h2>Spins</h2>" not in html

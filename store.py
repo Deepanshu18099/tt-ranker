@@ -444,6 +444,20 @@ def get_match(mid):
     return json.loads(raw) if raw else None
 
 
+def match_count():
+    """How many rated matches are on record.
+
+    Ids only — no match bodies are fetched — and capped by HISTORY_LIMIT, which
+    is as far back as anything else on the ladder looks. Returns None rather
+    than a wrong number if the database can't be reached, so a page can leave
+    the figure out instead of printing a zero that isn't true.
+    """
+    try:
+        return len(kv.lrange(HISTORY_KEY, 0, HISTORY_LIMIT - 1) or [])
+    except Exception:
+        return None
+
+
 def recent_matches(limit=10, uid=None):
     """The last `limit` applied matches, newest first — the whole ladder's, or
     one player's."""

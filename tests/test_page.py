@@ -21,8 +21,10 @@ def render(players=None, names=None, recent=None, delta=None, played=None,
                        delta or {}, played or {}, placement, **kw)
 
 
-def sub(html):
-    return re.search(r'<p class="sub">(.*?)</p>', html, re.S).group(1)
+def hero(html):
+    """The hero's supporting line — what the old `<p class="sub">` was."""
+    found = re.search(r'<p class="hero-note">(.*?)</p>', html, re.S)
+    return found.group(1) if found else ""
 
 
 # --- self-containment ------------------------------------------------------
@@ -44,7 +46,9 @@ def test_it_declares_itself_to_mobile():
 
 def test_a_chosen_name_is_what_shows():
     html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "Sagnik"})
-    assert "Sagnik" in html and "U1" not in sub(html)
+    # The uid may still appear as a filter option's value; what matters is that
+    # it is never what the page shows a reader.
+    assert "Sagnik" in html and ">U1<" not in html
 
 
 def test_a_missing_name_falls_back_to_something_short():
@@ -63,7 +67,7 @@ def test_names_are_escaped():
 
 def test_an_empty_ladder_invites_the_first_game():
     html = render()
-    assert "Nobody has joined yet" in sub(html)
+    assert "Nobody has joined yet" in hero(html)
     assert "/tt log" in html
 
 
@@ -71,14 +75,14 @@ def test_before_anyone_qualifies_it_counts_down():
     """The state this launches in, so it has to read as progress not emptiness."""
     html = render({"U1": P(1000, 1, 0, 3, 1), "U2": P(1000, 0, 1, 1, 3)},
                   {"U1": "Sagnik", "U2": "Vikash"})
-    assert "Sagnik is 2 away" in sub(html)     # 4 games played, 6 to qualify
-    assert '<span class="lead-rating num">2</span>' in html   # countdown is the numeral
+    assert "Sagnik is 2 away" in hero(html)     # 4 games played, 6 to qualify
+    assert '<span class="value num">2</span>' in html   # countdown is the numeral
     assert "games until the ladder has a leader" in html
 
 
 def test_a_signed_up_but_unplayed_ladder_says_so():
     html = render({"U1": P(), "U2": P()}, {"U1": "Sagnik"})
-    assert "no games played yet" in sub(html)
+    assert "no games played yet" in hero(html)
 
 
 # --- the ladder itself -----------------------------------------------------
@@ -87,7 +91,7 @@ def test_players_are_ranked_and_the_leader_leads():
     html = render({"U1": P(998, 3, 4, 8, 9), "U2": P(1042, 6, 2, 14, 6)},
                   {"U1": "Aman", "U2": "Sagnik"})
     assert html.index("Sagnik") < html.index("Aman")
-    assert '<span class="lead-rating num">1042</span>' in html
+    assert '<span class="value num">1042</span>' in html
 
 
 def test_only_qualified_players_are_ranked():
@@ -100,38 +104,41 @@ def test_only_qualified_players_are_ranked():
 def test_this_weeks_movement_is_shown_next_to_the_rating():
     """The page's whole job is answering 'did I move?'"""
     html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "Sagnik"}, delta={"U1": 13})
-    assert "13 this week" in html and 'class="move up"' in html
+    assert "+13" in html and 'class="move up"' in html
     html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "Sagnik"}, delta={"U1": -8})
-    assert "8 this week" in html and 'class="move down"' in html
+    assert "-8" in html and 'class="move down"' in html
     html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "Sagnik"}, played={"U1": 2})
-    assert "level this week" in html
+    assert "level" in html
 
 
 def test_playing_and_breaking_even_is_not_the_same_as_not_playing():
     """They used to render identically, which made "level" unreadable."""
     even = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "S"}, played={"U1": 3})
     absent = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "S"})
-    assert "level this week" in even
-    assert "no games this week" in absent
+    assert "level" in even and "no games" not in even
+    assert "no games" in absent
 
 
 # --- recent sessions -------------------------------------------------------
 
-def test_recent_sessions_name_the_winner_first():
+def test_a_match_card_marks_the_winner():
+    """The card keeps the sides in the order they were logged, so the winner is
+    marked rather than moved — and marked in words, not only in weight."""
     recent = [{"side_a": ["U2"], "side_b": ["U1"], "games": [[21, 14], [11, 0]],
                "games_a": 0, "games_b": 2, "deltas": {"U2": -9, "U1": 9}}]
     html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "Sagnik", "U2": "Aman"},
                   recent=recent)
-    block = html[html.index("Recent sessions"):]
-    assert block.index("Sagnik") < block.index("Aman")
-    assert "beat" in block
+    card = re.search(r'<article class="match"[^>]*>(.*?)</article>', html, re.S).group(1)
+    won = re.search(r'<div class="side[^"]*\bwon\b[^"]*">(.*?)</div>', card, re.S).group(1)
+    assert "Sagnik" in won and "Aman" not in won
+    assert "winner" in won                      # said, not just styled
 
 
 def test_a_drawn_session_is_not_described_as_a_win():
     recent = [{"side_a": ["U1"], "side_b": ["U2"], "games": [[21, 14], [14, 21]],
                "games_a": 1, "games_b": 1, "deltas": {"U1": 0, "U2": 0}}]
     html = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "A", "U2": "B"}, recent=recent)
-    assert "drew with" in html
+    assert ">Drawn<" in html
 
 
 def test_game_scores_appear_for_each_session():
@@ -149,25 +156,47 @@ def test_the_page_refreshes_itself_only_while_being_looked_at():
     assert "visibilityState" in html and "location.reload()" in html
 
 
-def test_gains_are_green_and_losses_red():
+def test_a_gain_and_a_loss_never_look_alike():
     """Convention, reinforcing the triangles — never the only signal, since the
     glyphs say the same thing without colour."""
     up = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "S"}, delta={"U1": 13})
     down = render({"U1": P(1042, 6, 2, 14, 6)}, {"U1": "S"}, delta={"U1": -13})
     assert "&#9650;" in up and "&#9660;" in down
-    assert ".up{color:#3FCB86}" in up and ".down{color:#FF7A70}" in down
+    assert ".move.up{color:var(--up)}" in up and ".move.down{color:var(--down)}" in down
 
 
 # --- spins -----------------------------------------------------------------
 
+SPINS = dict(spins=[("U2", 7000, 2000), ("U1", 3000, -2000)], start_spins=5000)
+
+
 def test_the_spins_table_ranks_the_richest_first():
-    html = page.render({"U1": P(), "U2": P()}, {"U1": "Sagnik", "U2": "Aman"}, [], {}, {}, 6,
-                       spins=[("U2", 7000, 2000), ("U1", 3000, -2000)],
-                       start_spins=5000, view="overall")
+    """Spins have a board of their own, reached by the toggle."""
+    html = page.render({"U1": P(), "U2": P()}, {"U1": "Sagnik", "U2": "Aman"}, [], {}, {},
+                       6, board="spins", **SPINS)
     block = html[html.index("<h2>Spins</h2>"):]
     assert block.index("Aman") < block.index("Sagnik")
-    assert "7,000" in block and "2,000 up" in block and "2,000 down" in block
+    assert "7,000" in block and "+2,000" in block and "-2,000" in block
     assert "10,000 in circulation" in block
+
+
+def test_the_two_boards_are_never_shown_at_once():
+    """Spins belong to no format, so the format tabs step aside for them."""
+    people = {"U1": P(1042, 6, 2, 14, 6), "U2": P()}
+    names = {"U1": "Sagnik", "U2": "Aman"}
+    ratings = page.render(people, names, [], {}, {}, 6, **SPINS)
+    spins = page.render(people, names, [], {}, {}, 6, board="spins", **SPINS)
+    assert "<h2>Standings</h2>" in ratings and "<h2>Spins</h2>" not in ratings
+    assert "<h2>Spins</h2>" in spins and "<h2>Standings</h2>" not in spins
+    assert 'class="tabs board-toggle"' in ratings[ratings.index("<main>"):]
+    assert "Singles" not in spins[spins.index("<main>"):]
+
+
+def test_the_toggle_is_absent_when_there_is_nothing_to_toggle_to():
+    """A toggle with nothing on the other side is furniture, not a control.
+    (Checked in the body — the stylesheet always carries the rule.)"""
+    html = page.render({"U1": P()}, {"U1": "Sagnik"}, [], {}, {}, 6)
+    assert 'class="tabs board-toggle"' not in html[html.index("<main>"):]
 
 
 def test_a_table_where_nobody_has_moved_is_not_shown():
@@ -205,16 +234,16 @@ def test_an_active_filter_is_lit_and_named_in_the_heading():
     html = page.render({"U1": P(), "U2": P()}, {"U1": "Sagnik", "U2": "Aman"},
                        recent_between(("U1", "U2")), {}, {}, 6,
                        filters={"player": "U1", "day": "today", "label": "today"})
-    assert "Sessions · Sagnik · today" in html
+    assert "Matches &middot; Sagnik &middot; today" in html
     assert 'class="on" href="?player=U1&amp;day=today"' in html
     assert '<option value="U1" selected>' in html
-    assert "1 session." in html
+    assert "1 match." in html
 
 
 def test_an_empty_filtered_list_says_so_instead_of_vanishing():
     html = page.render({"U1": P(), "U2": P()}, {"U1": "Sagnik"}, [], {}, {}, 6,
                        filters={"player": "U1", "day": "yesterday", "label": "yesterday"})
-    assert "No sessions match" in html and 'id="filters"' in html
+    assert "Try another day" in html and 'id="filters"' in html
 
 
 def test_a_filtered_list_shows_more_than_the_default_glance():
@@ -222,13 +251,13 @@ def test_a_filtered_list_shows_more_than_the_default_glance():
     plain = page.render({"U1": P(), "U2": P()}, {}, lots, {}, {}, 6)
     filtered = page.render({"U1": P(), "U2": P()}, {}, lots, {}, {}, 6,
                            filters={"player": "U1", "day": "", "label": ""})
-    assert plain.count('class="session"') == page.RECENT_SHOWN
-    assert filtered.count('class="session"') == 20
+    assert plain.count('class="match"') == page.RECENT_SHOWN
+    assert filtered.count('class="match"') == 20
 
 
 def test_each_session_says_when_it_happened():
     html = render({"U1": P(), "U2": P()}, {}, recent=recent_between(("U1", "U2")))
-    assert "Thu 17 Sep, 18:42" in html
+    assert "17 Sep &middot; 18:42" in html
 
 
 def test_filter_values_are_escaped():
