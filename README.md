@@ -742,6 +742,12 @@ settlement only ever credits.
 spin won is a spin somebody else lost and the currency is worth something.
 Betting and transfers are both zero-sum, and there's a test that says so.
 
+Which also makes a wallet balance a real standing. **`/tt rich`** ranks every
+wallet, richest first, with how far each has moved from the 5,000 it opened
+with, and the same table sits on the ladder page under *Spins* once anyone has
+moved. Players who never placed a bet are ranked at 5,000 rather than left off
+— that is what their wallet would hold the moment it opened.
+
 The trade is that busting out is permanent until an admin moves some across with
 `/tt transfer`. A weekly stipend is one constant away if that turns out to be
 too harsh — set `WEEKLY_STIPEND` above zero in [betting.py](betting.py) and both
