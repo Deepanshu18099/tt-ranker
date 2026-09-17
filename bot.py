@@ -640,28 +640,66 @@ NAME_ASK = ("*What should the ladder call you?* Set it once with "
             "can't render Slack mentions.")
 
 
-def handle_name(command, respond):
-    """`/tt name [what to call me]` — how you appear on the web ladder."""
-    uid = command["user_id"]
+CLEAR_WORDS = ("clear", "reset", "none", "remove")
+
+
+def handle_name(command, respond, client=None, context=None, logger=None):
+    """`/tt name [@someone] [what to call them]` — how a player appears on the
+    web ladder, which can't render a Slack mention.
+
+    Naming someone else is admin-only, and they're told it happened. Most people
+    will never set their own, so somebody has to be able to do it for them —
+    but a name is how you're shown to the whole office, and having it changed
+    without knowing is not something to discover from a leaderboard.
+    """
+    caller = command["user_id"]
     _, rest = parsing.split_subcommand(command.get("text", ""))
-    wanted = " ".join(rest.split())
+    bot_id = (context or {}).get("bot_user_id")
+    mentioned = parsing.mentions_in(rest, exclude=bot_id)
+
+    target = caller
+    if mentioned:
+        if not is_admin(caller):
+            respond(":lock: Only an admin can name someone else. "
+                    "`/tt name Your Name` sets your own.")
+            return
+        target = mentioned[0]
+    theirs = target != caller
+    # "<@bob> is" / "You're" — read the replies aloud before changing this.
+    who = f"<@{target}> is" if theirs else "You're"
+    wanted = " ".join(parsing.MENTION_RE.sub(" ", rest).split())
 
     if not wanted:
-        current = store.chosen_names().get(uid)
+        current = store.chosen_names().get(target)
         if current:
-            respond(f":label: You're *{current}* on the ladder. "
-                    "`/tt name Something Else` to change it.")
+            respond(f":label: {who} *{current}* on the ladder. "
+                    f"`/tt name {'@them ' if theirs else ''}Something Else` "
+                    "to change it.")
+        elif theirs:
+            respond(f":label: <@{target}> hasn't set a name. "
+                    f"`/tt name <@{target}> Their Name` sets one for them.")
         else:
             respond(f":label: You haven't set a name yet. {NAME_ASK}")
         return
-    if wanted.lower() in ("clear", "reset", "none"):
-        store.clear_name(uid)
-        respond(":label: Cleared. The ladder will fall back to your Slack name.")
+
+    if wanted.lower() in CLEAR_WORDS:
+        store.clear_name(target)
+        respond(f":label: Cleared. The ladder falls back to "
+                f"{'their' if theirs else 'your'} Slack name.")
+        if theirs:
+            _dm(client, target, ":label: An admin cleared your ladder name — it's "
+                               "back to your Slack one. `/tt name Your Name` to pick.",
+                logger=logger)
         return
-    saved = store.set_name(uid, wanted)
+
+    saved = store.set_name(target, wanted)
     url = ladder_url()
     where = f" — <{url}|see it>." if url else "."
-    respond(f":label: You're *{saved}* on the ladder now{where}")
+    respond(f":label: {who} *{saved}* on the ladder now{where}")
+    if theirs:
+        _dm(client, target, f":label: An admin set your name on the table tennis "
+                            f"ladder to *{saved}*. Not right? "
+                            "`/tt name Your Name` changes it.", logger=logger)
 
 
 def ladder_url():
@@ -1183,7 +1221,7 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
         elif sub == "intro":
             handle_intro(command, respond, client, logger=logger)
         elif sub == "name":
-            handle_name(command, respond)
+            handle_name(command, respond, client, context, logger=logger)
         elif sub == "nudge":
             handle_nudge(command, respond, client, logger=logger)
         else:

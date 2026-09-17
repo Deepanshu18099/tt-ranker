@@ -1125,3 +1125,70 @@ def test_the_welcome_dm_asks_for_a_name(fake, client, monkeypatch):
     bot.handle_member_joined({"channel": "C_TT", "user": B}, client=client,
                              context={"bot_user_id": BOT})
     assert "/tt name" in said(client.chat_postMessage)
+
+
+# --- an admin naming someone else -----------------------------------------
+
+def test_an_admin_names_another_player(fake, client, admin):
+    respond = run(f"name <@{B}> Vikash Maddi", client, user=ADMIN)
+    assert store.chosen_names()[B] == "Vikash Maddi"
+    assert f"<@{B}> is *Vikash Maddi*" in said(respond)
+
+
+def test_the_player_is_told_their_name_was_set_for_them(fake, client, admin):
+    """A name is how you're shown to the whole office. Finding out from the
+    leaderboard is not the way to learn it changed."""
+    run(f"name <@{B}> Vikash", client, user=ADMIN)
+    assert client.chat_postMessage.call_args.kwargs["channel"] == B
+    assert "An admin set your name" in said(client.chat_postMessage)
+    assert "/tt name" in said(client.chat_postMessage)
+
+
+def test_a_normal_player_cannot_name_someone_else(fake, client, admin):
+    respond = run(f"name <@{B}> Something Rude", client, user=C)
+    assert "Only an admin" in said(respond)
+    assert B not in store.chosen_names()
+    assert client.chat_postMessage.call_count == 0
+
+
+def test_an_admin_reads_back_someone_elses_name(fake, client, admin):
+    store.set_name(B, "Vikash")
+    assert "is *Vikash*" in said(run(f"name <@{B}>", client, user=ADMIN))
+
+
+def test_an_admin_asking_about_an_unnamed_player(fake, client, admin):
+    assert "hasn't set a name" in said(run(f"name <@{B}>", client, user=ADMIN))
+
+
+def test_an_admin_clears_someone_elses_name(fake, client, admin):
+    store.set_name(B, "Vikash")
+    respond = run(f"name <@{B}> clear", client, user=ADMIN)
+    assert B not in store.chosen_names()
+    assert "falls back to their Slack name" in said(respond)
+    assert "cleared your ladder name" in said(client.chat_postMessage)
+
+
+def test_naming_yourself_still_works_for_an_admin(fake, client, admin):
+    respond = run("name Praneat", client, user=ADMIN)
+    assert store.chosen_names()[ADMIN] == "Praneat"
+    assert "You're *Praneat*" in said(respond)
+    assert client.chat_postMessage.call_count == 0     # no DM to yourself
+
+
+def test_the_bot_is_not_a_target(fake, client, admin):
+    """@-ing the bot while naming yourself shouldn't rename the bot."""
+    respond = MagicMock()
+    bot.handle_tt_command(MagicMock(),
+                          {"user_id": ADMIN, "text": f"name <@{BOT}> Praneat",
+                           "channel_id": "C1", "trigger_id": "t"},
+                          respond, client=client, context={"bot_user_id": BOT})
+    assert store.chosen_names().get(ADMIN) == "Praneat"
+    assert BOT not in store.chosen_names()
+
+
+def test_a_name_set_by_an_admin_shows_on_the_ladder(fake, client, admin):
+    import page
+    run(f"name <@{B}> Vikash Maddi", client, user=ADMIN)
+    store.ensure_players([B])
+    html = page.render(store.all_players(), store.names(), [], {}, {}, 6)
+    assert "Vikash Maddi" in html

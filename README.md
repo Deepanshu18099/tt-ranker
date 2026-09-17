@@ -53,6 +53,7 @@ Everything is one slash command, `/tt`.
 | `/tt register` | Join early (playing registers you anyway) |
 | `/tt sync` | Put everyone already in this channel on the ladder |
 | `/tt name Your Name` | How you appear on the web ladder |
+| `/tt name @bob Bob Smith` | Admins only — set it for someone else |
 | `/tt intro` | Post the how-it-works message, for pinning |
 | `/tt help` | All of the above, in Slack |
 
@@ -608,4 +609,9 @@ people. Three tiers, best first:
 
 `/tt nudge` (admins only) DMs everyone still on tier 2 or 3. New players are
 asked when they join.
+
+Most people never get round to setting their own, so an admin can do it for
+them: `/tt name @bob Bob Smith`. The player is DM'd that it happened and how to
+change it — a name is how you're shown to the whole office, and a leaderboard is
+no way to find out it changed.
 
