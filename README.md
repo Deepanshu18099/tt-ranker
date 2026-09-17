@@ -59,6 +59,7 @@ Everything is one slash command, `/tt`.
 | `/tt schedule @bob 6pm` | Or type it — `in 30m`, `6pm`, `6:30pm` and `18:30` all work |
 | `/tt book` · `/tt book 6` | Open fixtures · one in full, with every stake |
 | `/tt wallet` | Your spins and recent moves |
+| `/tt transfer @bob 500` | Admins only — move spins between wallets |
 | `/tt help` | All of the above, in Slack |
 
 ### The form
@@ -731,6 +732,20 @@ settlement only ever credits — so the Monday stipend alone guarantees you can
 always play again. Losing everything costs you a week, not the game. **The
 stipend is the only thing in the system that mints spins**; every other path is
 zero-sum, and there's a test that says so.
+
+### Moving spins
+
+`/tt transfer @bob 500` moves spins out of your own wallet;
+`/tt transfer @alice @bob 500` moves them between two other people. **Admins
+only** — a wallet you didn't agree to empty isn't something any player should be
+able to reach.
+
+Both forms are **zero-sum**: a debit and a credit of the same size, so the
+Monday stipend is still the only thing in the system that mints. An admin
+handing out a prize is giving away their own spins, not printing new ones.
+
+Everyone whose balance moved is DM'd, and a move made by a third party says so
+in both ledgers — `/tt wallet` can always answer *where did that come from*.
 
 ### Betting on your own match
 

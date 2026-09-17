@@ -368,3 +368,71 @@ def test_the_stipend_is_the_only_thing_that_mints(fake):
     opening = supply()
     betting.pay_stipend(week="tt:wk:2026-W38")
     assert supply() == opening + betting.WEEKLY_STIPEND * len(EVERYONE)
+
+
+# --- transfers -------------------------------------------------------------
+
+def test_a_transfer_moves_spins_between_wallets(fake):
+    betting.ensure_wallets([A, B])
+    ok, message = betting.transfer(A, B, 500)
+    assert ok and "500" in message
+    assert betting.balance(A) == betting.START_SPINS - 500
+    assert betting.balance(B) == betting.START_SPINS + 500
+
+
+def test_a_transfer_mints_nothing(fake):
+    """The Monday stipend stays the only thing in the system that creates spins."""
+    betting.ensure_wallets(EVERYONE)
+    before = supply()
+    betting.transfer(A, B, 1234)
+    betting.transfer(B, C, 99)
+    assert supply() == before
+
+
+def test_you_cannot_send_what_you_do_not_have(fake):
+    betting.ensure_wallets([A, B])
+    ok, message = betting.transfer(A, B, betting.START_SPINS + 1)
+    assert not ok and "only has" in message
+    assert betting.balance(A) == betting.START_SPINS
+
+
+def test_a_transfer_to_yourself_is_refused(fake):
+    assert betting.transfer(A, A, 50)[0] is False
+
+
+@pytest.mark.parametrize("amount", [0, -50, "lots", None])
+def test_a_transfer_needs_a_real_amount(fake, amount):
+    betting.ensure_wallets([A, B])
+    assert betting.transfer(A, B, amount)[0] is False
+    assert betting.balance(B) == betting.START_SPINS
+
+
+def test_both_ledgers_name_the_other_party(fake):
+    betting.ensure_wallets([A, B])
+    betting.transfer(A, B, 250)
+    assert f"<@{B}>" in betting.ledger(A)[0]["reason"]
+    assert f"<@{A}>" in betting.ledger(B)[0]["reason"]
+
+
+def test_a_third_party_move_is_marked_as_one(fake):
+    """So /tt wallet can always answer "where did that come from"."""
+    betting.ensure_wallets([A, B, C])
+    betting.transfer(A, B, 100, by=C)
+    assert f"by <@{C}>" in betting.ledger(A)[0]["reason"]
+    assert f"by <@{C}>" in betting.ledger(B)[0]["reason"]
+
+
+def test_your_own_transfer_is_not_marked_as_third_party(fake):
+    betting.ensure_wallets([A, B])
+    betting.transfer(A, B, 100, by=A)
+    assert "by <@" not in betting.ledger(A)[0]["reason"]
+
+
+def test_a_transfer_cannot_reach_spins_already_staked(fake):
+    """A stake has left the wallet, so it simply isn't there to send."""
+    betting.ensure_wallets([A, C])
+    record = fixture_at()
+    betting.place_bet(record, C, "a", 400)
+    ok, _ = betting.transfer(C, A, betting.START_SPINS - 399)
+    assert not ok
+    assert betting.pool(record["id"])["a"] == 400

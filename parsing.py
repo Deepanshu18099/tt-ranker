@@ -53,6 +53,7 @@ SUBCOMMANDS = {
     "bet": "bet", "stake": "bet", "back": "bet",
     "wallet": "wallet", "balance": "wallet", "spins": "wallet", "purse": "wallet",
     "book": "book", "bets": "book", "fixtures": "book", "upcoming": "book",
+    "transfer": "transfer", "pay": "transfer", "send": "transfer", "give": "transfer",
     # `form` and a bare `log` both open the guided modal.
     "form": "log", "new": "log",
     "help": "help", "h": "help", "usage": "help",
@@ -209,6 +210,29 @@ CLOCK_24_RE = re.compile(r"\b(\d{1,2}):(\d{2})\b")
 
 DEFAULT_LEAD_MINUTES = 30
 MAX_LEAD_DAYS = 14
+
+
+AMOUNT_RE = re.compile(r"\b(\d[\d,]*)\b")
+
+
+def parse_transfer(text, caller=None, bot_id=None):
+    """`@bob 500` (out of your own wallet) or `@alice @bob 500` (between two
+    other people) → (sender, recipient, amount).
+
+    Amounts are read after the mentions are stripped out, so the digits inside a
+    Slack user id can never be mistaken for a number of spins.
+    """
+    people = mentions_in(text, exclude=bot_id)
+    amounts = AMOUNT_RE.findall(MENTION_RE.sub(" ", text or ""))
+    if not people:
+        raise ParseError("Who to? `/tt transfer @someone 500`, or "
+                         "`/tt transfer @from @to 500`.")
+    if not amounts:
+        raise ParseError("How many spins? `/tt transfer @someone 500`.")
+    amount = int(amounts[-1].replace(",", ""))
+    if len(people) == 1:
+        return caller, people[0], amount
+    return people[0], people[1], amount
 
 
 def parse_when(text, now):

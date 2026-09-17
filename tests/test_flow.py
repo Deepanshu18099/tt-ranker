@@ -1796,3 +1796,66 @@ def test_the_detail_view_of_an_untouched_fixture(fake, client):
 
 def test_asking_about_a_fixture_that_does_not_exist(fake, client):
     assert "No fixture" in said(run("book 999", client))
+
+
+# --- moving spins ----------------------------------------------------------
+
+def test_an_admin_transfers_out_of_their_own_wallet(fake, client, admin):
+    respond = run(f"transfer <@{B}> 500", client, user=ADMIN)
+    assert betting.balance(ADMIN) == betting.START_SPINS - 500
+    assert betting.balance(B) == betting.START_SPINS + 500
+    assert "Moved" in said(respond)
+
+
+def test_an_admin_moves_spins_between_two_other_people(fake, client, admin):
+    run(f"transfer <@{C}> <@{D}> 250", client, user=ADMIN)
+    assert betting.balance(C) == betting.START_SPINS - 250
+    assert betting.balance(D) == betting.START_SPINS + 250
+
+
+def test_a_normal_player_cannot_move_spins(fake, client, admin):
+    respond = run(f"transfer <@{C}> 500", client, user=B)
+    assert "Only an admin" in said(respond)
+    assert betting.balance(C) == betting.START_SPINS
+
+
+def test_the_recipient_is_told(fake, client, admin):
+    """A balance changing with no warning reads as a bug."""
+    run(f"transfer <@{B}> 500", client, user=ADMIN)
+    assert "sent you" in dm_text(client, B)
+
+
+def test_both_sides_are_told_when_a_third_party_moved_it(fake, client, admin):
+    run(f"transfer <@{C}> <@{D}> 250", client, user=ADMIN)
+    assert f"moved by <@{ADMIN}>" in dm_text(client, C)
+    assert f"<@{ADMIN}> moved it" in dm_text(client, D)
+
+
+def test_a_transfer_with_no_amount_explains_itself(fake, client, admin):
+    assert "How many spins" in said(run(f"transfer <@{B}>", client, user=ADMIN))
+
+
+def test_a_transfer_with_nobody_named_explains_itself(fake, client, admin):
+    assert "Who to" in said(run("transfer 500", client, user=ADMIN))
+
+
+def test_a_comma_separated_amount_works(fake, client, admin):
+    run(f"transfer <@{B}> 1,500", client, user=ADMIN)
+    assert betting.balance(B) == betting.START_SPINS + 1500
+
+
+def test_the_digits_in_a_user_id_are_not_read_as_an_amount(fake, client, admin):
+    """U0BBB1 has digits in it; only what's left after stripping mentions counts."""
+    run(f"transfer <@{B}> 75", client, user=ADMIN)
+    assert betting.balance(B) == betting.START_SPINS + 75
+
+
+def test_an_overdraft_is_refused_with_the_real_balance(fake, client, admin):
+    respond = run(f"transfer <@{B}> 999999", client, user=ADMIN)
+    assert "only has" in said(respond)
+    assert betting.balance(B) == betting.START_SPINS
+
+
+def test_a_transfer_shows_up_in_the_wallet(fake, client, admin):
+    run(f"transfer <@{B}> 500", client, user=ADMIN)
+    assert f"<@{ADMIN}>" in said(run("wallet", client, user=B))

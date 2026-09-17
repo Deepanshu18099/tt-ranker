@@ -115,6 +115,38 @@ def ledger(uid, limit=10):
     return out
 
 
+def transfer(sender, recipient, amount, by=None, now=None):
+    """Move spins from one wallet to another. Returns (ok, message).
+
+    Zero-sum on purpose: it debits and credits the same number, so the only
+    thing in the system that mints spins is still the Monday stipend. An admin
+    handing out a prize is a transfer out of their own wallet, not new money.
+    """
+    if not (sender and recipient):
+        return False, "Who's paying whom?"
+    if sender == recipient:
+        return False, "That's the same wallet."
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return False, f"How many {CURRENCY}? Whole numbers only."
+    if amount < 1:
+        return False, f"That has to be at least 1 {CURRENCY}."
+
+    ensure_wallets([sender, recipient])
+    held = balance(sender)
+    if amount > held:
+        return False, f"<@{sender}> only has {held:,} {CURRENCY}."
+
+    # Named both ways in the ledger, and marked when a third party moved it, so
+    # /tt wallet can always answer "where did that come from".
+    hand = f" by <@{by}>" if by and by not in (sender, recipient) else ""
+    adjust(sender, -amount, f"sent to <@{recipient}>{hand}", now)
+    adjust(recipient, amount, f"from <@{sender}>{hand}", now)
+    return True, (f"Moved *{amount:,} {CURRENCY}* from <@{sender}> to "
+                  f"<@{recipient}>.")
+
+
 def pay_stipend(week=None, now=None):
     """Top every wallet up once a week. Idempotent per week — the claim is the
     SADD, so a cron retry can't pay twice."""

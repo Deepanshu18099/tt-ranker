@@ -1321,6 +1321,8 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_wallet(command, respond)
         elif sub == "book":
             handle_book(command, respond)
+        elif sub == "transfer":
+            handle_transfer(command, respond, client, bot_id, logger=logger)
         else:
             respond(HELP)
     except Exception:
@@ -1913,6 +1915,46 @@ def fixture_detail(record, caller=None):
     if caller:
         lines.append(f"\n_Your balance: *{fmt_spins(betting.balance(caller))}*._")
     return "\n".join(lines)
+
+
+def handle_transfer(command, respond, client=None, bot_id=None, logger=None):
+    """`/tt transfer @bob 500` — move spins. Admin only.
+
+    Two forms: out of your own wallet, or between two other people. Both are
+    zero-sum, so nothing here mints. Restricted because a wallet you didn't
+    agree to empty is not something any player should be able to reach.
+    """
+    caller = command["user_id"]
+    if not is_admin(caller):
+        respond(f":lock: Only an admin can move {betting.CURRENCY}. "
+                f"`/tt wallet` shows yours.")
+        return
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    try:
+        sender, recipient, amount = parsing.parse_transfer(rest, caller, bot_id)
+    except parsing.ParseError as e:
+        respond(f":warning: {e}")
+        return
+
+    ok, message = betting.transfer(sender, recipient, amount, by=caller)
+    if not ok:
+        respond(f":warning: {message}")
+        return
+    respond(f":money_with_wings: {message}  "
+            f"<@{sender}> now has *{fmt_spins(betting.balance(sender))}*, "
+            f"<@{recipient}> *{fmt_spins(betting.balance(recipient))}*.")
+
+    # Tell the people whose wallets moved. A balance changing without warning is
+    # the sort of thing that reads as a bug.
+    by = "" if caller == sender else f" <@{caller}> moved it."
+    _dm(client, recipient,
+        f":money_with_wings: <@{sender}> sent you *{fmt_spins(amount)}*.{by} "
+        f"You now have *{fmt_spins(betting.balance(recipient))}*.", logger=logger)
+    if caller != sender:
+        _dm(client, sender,
+            f":money_with_wings: *{fmt_spins(amount)}* went from your wallet to "
+            f"<@{recipient}>, moved by <@{caller}>. You have "
+            f"*{fmt_spins(betting.balance(sender))}*.", logger=logger)
 
 
 def handle_wallet(command, respond):
