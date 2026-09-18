@@ -25,11 +25,20 @@ still cost rating — you were expected to win by more, and that is the model
 working rather than a bug.
 
 K is not a constant. A newcomer's 1000 is a guess, so their first games are
-rated hard and the weight eases off smoothly as they play — game one moves
-someone about four times as far as game one hundred. One K is used for a whole
-session, being the mean of the K its games would have carried, because a per-game
-K would make a 2-2 split stop cancelling: the wins would be worth more than the
-losses purely for having been typed first.
+rated hard and the weight eases off smoothly as they play — a player brings
+about four times as much to their first game as to their hundredth. One K is
+used for a whole session, being the mean of the K its games would have carried,
+because a per-game K would make a 2-2 split stop cancelling: the wins would be
+worth more than the losses purely for having been typed first.
+
+**The ladder is zero-sum.** Whatever one side gains, the other loses, at any
+session length, in singles and in doubles, whoever is playing. That is the whole
+point of a rating — it only means anything against everyone else's, and a pool
+that quietly inflates makes this month's 1200 a different thing from last
+month's. It is also why the two sides share one stake rather than each bringing
+their own K: a system cannot move a newcomer further than their opponent in the
+same game *and* balance, because the extra would have to be minted. See
+match_k().
 
 Doubles rates a team at its members' mean rating. In table tennis that is not
 the compromise it is in other sports — the pair *alternates strokes*, by rule,
@@ -116,15 +125,14 @@ def k_factor(games_played, doubles=False, doubles_factor=None):
     """How hard one *game* may move the rating of someone who has played
     `games_played` of them.
 
-    Smooth, and steep at the start: game 1 moves a player about four times as
-    far as game 100. That is the whole point — a newcomer's 1000 is a guess, and
-    a rating system that takes forty games to correct it has spent forty games
-    telling everyone something it knew to be wrong.
+    Smooth, and steep at the start: a player brings about four times as much to
+    game 1 as to game 100. That is the whole point — a newcomer's 1000 is a
+    guess, and a rating system that takes forty games to correct it has spent
+    forty games telling everyone something it knew to be wrong.
 
-    Each player brings their own K, so a newcomer's rating moves further than
-    the veteran's in the very same game. That deliberately breaks strict
-    zero-sum — the pool gains a little when a new player wins — and converging
-    newcomers quickly is worth more here than conserving points exactly.
+    This is what one player *brings*, not what they end up moving. A match is
+    played for a single stake shared by both sides, or it could not conserve;
+    match_k() is where the two are reconciled.
     """
     k = K_SETTLED + (K_NEW - K_SETTLED) * math.exp(-max(0, games_played) / K_DECAY)
     if not doubles:
@@ -218,8 +226,8 @@ def session_weights(rating_a, rating_b, games):
     the games it came from and the count stays honest.
 
     Side B's weights are exactly the negatives of these — same mov, same upset
-    correction, and (1−result) − (1−E) == −(result − E) — which is what keeps
-    the model zero-sum for players on the same K.
+    correction, and (1−result) − (1−E) == −(result − E) — which is half of what
+    keeps the model zero-sum. The other half is the shared stake in match_k().
     """
     exp_a = expected(rating_a, rating_b)
     out = []
@@ -238,6 +246,58 @@ def session_weight(rating_a, rating_b, games):
     """The whole session's signal, from side A's point of view. Informational
     now that K is applied per game — the summary blob reports it."""
     return sum(session_weights(rating_a, rating_b, games))
+
+
+def match_k(players, length, doubles=False, doubles_factor=None):
+    """The one stake a match is played for: the mean of what each player would
+    have brought to it on their own.
+
+    It has to be shared, because a rating system cannot both move a newcomer
+    further than their opponent *in the same game* and conserve — the extra has
+    to come from somewhere, and the only honest somewhere is the opponent. So
+    the pair meets in the middle:
+
+      two settled players   → K_SETTLED exactly, so the established board feels
+                              nothing at all;
+      two newcomers         → K_NEW, so calibration between new players is
+                              untouched;
+      a newcomer and a vet  → about halfway, so the newcomer still converges far
+                              faster than the old rule managed, and the veteran
+                              moves more than usual for that one game.
+
+    That last line is the price of conservation, and it is the right way round:
+    a settled player who loses to an unknown has learned something about
+    themselves too.
+    """
+    ks = [session_k(p.get("games", 0), length, doubles=doubles,
+                    doubles_factor=doubles_factor) for p in players]
+    return sum(ks) / len(ks) if ks else K_SETTLED
+
+
+def _conserve(deltas, before, after):
+    """Give away only what was actually lost.
+
+    The floor stops a rating falling below RATING_FLOOR, so a player pinned
+    there drops less than the maths said — and without this, the difference
+    would be handed to their opponent out of nothing. Nobody has it to give, so
+    the winning side is trimmed to what the losing side really paid.
+
+    Mutates in place: `after` has to move with `deltas` or the two would
+    disagree about the same match.
+    """
+    gained = sum(d for d in deltas.values() if d > 0)
+    lost = -sum(d for d in deltas.values() if d < 0)
+    excess = gained - lost
+    if excess <= 0:
+        return deltas
+    winners = [uid for uid, d in deltas.items() if d > 0]
+    # Spread the trim evenly, with the remainder going to the biggest gains, so
+    # two partners never come out of the same match a point apart for no reason.
+    for i, uid in enumerate(sorted(winners, key=lambda u: -deltas[u])):
+        share = excess // len(winners) + (1 if i < excess % len(winners) else 0)
+        deltas[uid] -= share
+        after[uid] = before[uid] + deltas[uid]
+    return deltas
 
 
 def rate_match(side_a, side_b, games, doubles_factor=None):
@@ -264,23 +324,26 @@ def rate_match(side_a, side_b, games, doubles_factor=None):
     weight_a = sum(weights)
     decided = games_a + games_b
 
+    # One stake for the match, so what one side gains the other side loses. See
+    # match_k() for why it cannot be per player and still balance.
+    k = match_k(side_a + side_b, len(weights), doubles=doubles,
+                doubles_factor=doubles_factor)
+
     deltas, before, after = {}, {}, {}
     for side, sign in ((side_a, weight_a), (side_b, -weight_a)):
         for p in side:
-            # The K of the session, which is the mean of the K this player
-            # carried into each of its games — so a long first evening converges
-            # rather than overshooting, and a session that splits evenly still
-            # comes to nothing whatever order it was typed in.
-            k = session_k(p.get("games", 0), len(weights), doubles=doubles,
-                          doubles_factor=doubles_factor)
             swing = k * sign
             rating = int(p["rating"])
+            # Half away from zero, on a magnitude both sides share, so the two
+            # roundings are exact negatives of each other rather than nearly so.
             new = max(RATING_FLOOR, rating + _round_half_away(swing))
             before[p["uid"]] = rating
             after[p["uid"]] = new
             # Read the delta back off the floor-clamped result, so the number we
             # report is always the change that actually happened.
             deltas[p["uid"]] = new - rating
+
+    _conserve(deltas, before, after)
 
     return {
         "doubles": doubles,

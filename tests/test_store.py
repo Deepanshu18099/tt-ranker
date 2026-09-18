@@ -273,3 +273,42 @@ def test_the_walk_stops_at_the_first_match_older_than_the_window(fake, monkeypat
     found = store.matches_in(start, start + timedelta(days=1))
     assert len(found) == 1
     assert len(calls) == 1   # first chunk of two already crossed the boundary
+
+
+# --- the books balance, all the way to the database -------------------------
+
+def test_a_confirmed_match_conserves_both_ladders(fake):
+    """Not just the maths in elo.py: the ratings that actually get written.
+
+    A newcomer against a settled player is the case that used to mint — the two
+    carried different K and the difference came from nowhere.
+    """
+    store.ensure_players([A, B, C])
+    for _ in range(12):                      # B becomes well played, A stays new
+        confirm(log([B], [C]), by=C)
+    before = {uid: store.get_player(uid)["rating"] for uid in (A, B)}
+    blob = confirm(log([A], [B], games=[(11, 4)] * 3), by=B)
+    assert sum(blob["deltas"].values()) == 0
+    assert sum(blob["split_rated"]["deltas"].values()) == 0
+    after = {uid: store.get_player(uid)["rating"] for uid in (A, B)}
+    assert (after[A] - before[A]) + (after[B] - before[B]) == 0
+
+
+def test_the_whole_pool_is_the_same_size_it_started(fake):
+    """Play a season of mixed experience and the total is untouched. This is
+    the property a rating means: yours only says anything against everyone
+    else's."""
+    players = [A, B, C, D]
+    store.ensure_players(players)
+    start = sum(store.get_player(uid)["rating"] for uid in players)
+    pairs = [(A, B), (C, D), (A, C), (B, D), (A, D), (B, C), (A, B), (C, A)]
+    for i, (one, two) in enumerate(pairs):
+        games = [(11, 6)] * 3 if i % 3 else [(6, 11), (11, 8), (9, 11)]
+        confirm(log([one], [two], games=games), by=two)
+    assert sum(store.get_player(uid)["rating"] for uid in players) == start
+
+
+def test_a_doubles_result_conserves_across_all_four(fake):
+    blob = confirm(log([A, B], [C, D], games=[(11, 5), (11, 7)]), by=C)
+    assert sum(blob["deltas"].values()) == 0
+    assert sum(blob["split_rated"]["deltas"].values()) == 0
