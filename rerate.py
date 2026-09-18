@@ -71,7 +71,8 @@ def replay(blobs):
                     for u in side]
 
         split = elo.rate_match(split_entries(blob["side_a"]),
-                               split_entries(blob["side_b"]), blob["games"])
+                               split_entries(blob["side_b"]), blob["games"],
+                               doubles_factor=elo.DOUBLES_OWN_K_FACTOR)
 
         snapshot = {uid: dict(state[uid]) for uid in uids}
         for side, mine, theirs in ((blob["side_a"], "a", "b"),

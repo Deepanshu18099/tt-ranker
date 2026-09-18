@@ -239,3 +239,33 @@ def test_no_format_tab_carries_the_spins_table(fake):
     assert "Play money" in page.render({}, {}, [], {}, {}, 4, board="spins",
                                        spins=[(A, 6000, 1000)], start_spins=5000,
                                        circulating=5000)
+
+
+def test_the_doubles_ladder_moves_further_than_the_overall_rating(fake):
+    """The same result, weighed twice over. Half of a doubles win belongs to
+    your partner, so your *overall* rating takes half of it — but the doubles
+    ladder is a ladder of pairs-play, where the result is the whole story."""
+    blob = play([A, B], [C, D])
+    player = store.get_player(A)
+    on_the_doubles_board = store.doubles_view(player)["rating"] - elo.START_RATING
+    overall = player["rating"] - elo.START_RATING
+    assert on_the_doubles_board > overall > 0
+    assert blob["split_rated"]["deltas"][A] > blob["deltas"][A]
+
+
+def test_a_player_new_to_doubles_calibrates_on_the_doubles_board_alone(fake):
+    """Someone settled in singles is still a newcomer in doubles, and the
+    doubles board should say so by moving them properly. The per-format game
+    counts make that happen without anything here knowing about it."""
+    for _ in range(12):
+        play([A], [B], games=[(11, 6)] * 3)          # A is now well-played at singles
+    settled = store.singles_view(store.get_player(A))
+    assert elo.games_played(settled) >= 30
+    assert elo.games_played(store.doubles_view(store.get_player(A))) == 0
+
+    before = store.doubles_view(store.get_player(A))["rating"]
+    play([A, C], [B, D])
+    moved = store.doubles_view(store.get_player(A))["rating"] - before
+    # A first doubles result moves them hard, however long they have played
+    # singles — which is the point of rating the formats apart.
+    assert moved > 25

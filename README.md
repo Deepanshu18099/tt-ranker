@@ -322,16 +322,60 @@ rewrite the ladder, and a single deuce shouldn't erase a win.
 
 ### 4 · How much one game may move you — K
 
-| Situation | K |
-|---|---|
-| Your first 50 **games** (provisional) | 16 |
-| After that | 11 |
-| Doubles | ×0.5 of the above |
+Everyone opens at 1000, and that number is a guess. The job of your first games
+is to replace it, so they are rated hard and the weight eases off smoothly as
+you play:
 
-Counted in games rather than sessions, because a session can be any length. New
-players move fast so they reach roughly the right level in a few sessions rather
-than a season. Doubles counts half, because half of every doubles result is your
-partner's play and none of it is yours.
+> **K(n) = 13 + 42 · e^(−n / 12)**, where *n* is games played
+
+| Games played | K | |
+|---|---|---|
+| 0 | 55 | your first game |
+| 5 | 41 | |
+| 10 | 31 | half the journey is done |
+| 20 | 21 | |
+| 30 | 16 | near enough settled |
+| 100+ | 13 | settled |
+| Doubles | ×0.5 | ×0.8 on the doubles ladder itself |
+
+Game one moves you about **four times** as far as game one hundred, which is the
+ratio every comparable system uses — chess.com steps 40 → 20 → 10, the USCF
+divides by (N + m), Glicko and Codeforces carry an uncertainty that narrows. The
+opening 55 is pitched a notch above chess.com's provisional 40 and well short of
+Codeforces, where a first contest moves someone by hundreds: a first three-game
+session here moves a newcomer around 80 points, which is loud enough to be worth
+playing and quiet enough that one odd evening is not a verdict.
+
+A *curve*, not steps, because a step is a cliff. The old rule was 16 for fifty
+games and 11 after, so your 49th game moved you 45% further than your 51st for
+no reason anyone could see on the board.
+
+Counted in games rather than sessions, because a session can be any length —
+and counted **per format**, so someone settled at singles is still a newcomer at
+doubles and the doubles board moves them properly.
+
+One K is used for a whole session: the mean of the K its games would have
+carried. That does two things at once — a newcomer's ten-game first evening is
+rated at about the K of its fifth game, so it converges rather than overshooting
+on game one's K; and a 2–2 split still comes to exactly nothing, which a per-game
+K would have quietly broken by making the wins worth more than the losses purely
+for being typed first.
+
+**What it's worth.** A player whose true strength is 1400, starting from 1000,
+playing threes against a normal field (simulated, 300 runs, median):
+
+| After | Old rule | New | Gap closed, old → new |
+|---|---|---|---|
+| 3 games | 1021 | 1067 | 5% → 17% |
+| 6 games | 1043 | 1120 | 11% → 30% |
+| 12 games | 1079 | 1172 | 20% → 43% |
+| 21 games | 1123 | 1212 | 31% → 53% |
+| 45 games | 1208 | 1263 | 52% → 66% |
+| 90 games | 1270 | 1306 | 68% → 76% |
+
+More than twice as much of the gap closed in the first dozen games. The long
+tail is a property of Elo itself rather than of K — you close the last of it by
+playing people who aren't already below you.
 
 ### Plus one correction: the favourite's blowout counts for less
 
@@ -404,9 +448,18 @@ two games easily and dropping one, and the model is allowed to say so.
 
 ### Doubles
 
-The pair is rated at the **average** of the two partners, both partners take the
-**same** change, at **half** the usual K — half of any doubles result is your
-partner's doing, so it says half as much about you.
+The pair is rated at the **average** of the two partners, and both partners take
+the **same** change.
+
+The average is not the compromise here that it is in other sports: in table
+tennis the pair **alternates strokes**, by rule, so each player really does play
+half the balls. That is also what sets the discount — a doubles result is half
+yours, so it counts at **half** K towards your overall rating.
+
+On the **doubles ladder itself** it counts at ×0.8, not ×0.5. That board is a
+ladder of how people play in pairs, so a doubles result is the whole of the
+evidence rather than half of it; what's left of the discount is for the partner
+you didn't choose.
 
 > Alice (1200) and Ben (900) — a 1050 pair on paper.
 
@@ -446,7 +499,7 @@ direction you earned — a 20-game session you lose 6–14 costs far more than a
 **Is the total rating in the system conserved?**
 Between two established players, exactly — the winner gains precisely what the
 loser drops, at any session length, and a doubles result nets to zero across all
-four. The one exception is deliberate: a provisional player carries a bigger K
+four. The one exception is deliberate: a newer player carries a bigger K
 than their established opponent, so a newcomer's early games add a few points to
 the pool. Converging newcomers quickly is worth more than a perfectly closed
 system.
@@ -475,8 +528,8 @@ rating exists and moves, it just isn't ranked yet.
 ### Changing the numbers
 
 Every constant above is a named value at the top of [elo.py](elo.py) —
-`START_RATING`, `K_ESTABLISHED`, `K_PROVISIONAL`, `PROVISIONAL_GAMES`,
-`DOUBLES_K_FACTOR`, `MOV_BASELINE`, `MOV_GAIN`, `MOV_MIN`/`MOV_MAX`,
+`START_RATING`, `K_NEW`, `K_SETTLED`, `K_DECAY`, `DOUBLES_K_FACTOR`,
+`DOUBLES_OWN_K_FACTOR`, `MOV_BASELINE`, `MOV_GAIN`, `MOV_MIN`/`MOV_MAX`,
 `UPSET_SCALE`, `RATING_FLOOR` — plus `PLACEMENT_GAMES` in [bot.py](bot.py).
 Change one, run `pytest`, redeploy.
 
@@ -492,7 +545,12 @@ Two knobs do most of the tuning:
 
 - **`MOV_GAIN`** — how much the scoreline matters. At 1.0 a whitewash is worth
   2× a deuce-fest; at the current 1.5 it's ~2.9×; at 2.0, ~4.3×.
-- **`K_ESTABLISHED`** — overall volatility. Everything scales with it.
+- **`K_SETTLED`** — overall volatility once people have played. Everything
+  scales with it.
+- **`K_NEW`** and **`K_DECAY`** — how hard a newcomer's first games count, and
+  over how many games that eases off. `K_DECAY` is the games for the gap between
+  the two to shrink by 1/e, so half the journey is done in about `0.7 × K_DECAY`
+  games.
 
 ---
 

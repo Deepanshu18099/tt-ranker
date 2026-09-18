@@ -24,25 +24,60 @@ did you do than expected". Winning narrowly against someone far below you can
 still cost rating — you were expected to win by more, and that is the model
 working rather than a bug.
 
-Doubles rates a team at its members' mean rating and moves every member by the
-same amount at a reduced K — you only control half of a doubles match.
+K is not a constant. A newcomer's 1000 is a guess, so their first games are
+rated hard and the weight eases off smoothly as they play — game one moves
+someone about four times as far as game one hundred. One K is used for a whole
+session, being the mean of the K its games would have carried, because a per-game
+K would make a 2-2 split stop cancelling: the wins would be worth more than the
+losses purely for having been typed first.
+
+Doubles rates a team at its members' mean rating. In table tennis that is not
+the compromise it is in other sports — the pair *alternates strokes*, by rule,
+so each player really does play half the balls. The same logic sets the discount:
+a doubles result carries about half the evidence about you, so it counts half on
+your overall rating. On the doubles ladder itself it counts nearly in full,
+because that ladder is a ladder of how people play in pairs; what is left of the
+discount is for the partner you did not choose.
 """
 import math
 
 START_RATING = 1000
 RATING_FLOOR = 100  # ratings can sink, but not to something that reads as a bug
 
-# Per *game*, not per session. Calibrated so a typical three-game session lands
-# where the old session-based numbers did, while longer sessions scale up.
-K_PROVISIONAL = 16
-K_ESTABLISHED = 11
-# Counted in games rather than sessions, because a session is any length.
-PROVISIONAL_GAMES = 50
+# How hard one *game* may move a rating, and how that eases off.
+#
+# A newcomer's rating is a guess — 1000, the same guess everyone gets — and the
+# job of their first games is to replace it. So K starts high and decays
+# smoothly towards the settled value with every game played:
+#
+#     K(n) = K_SETTLED + (K_NEW - K_SETTLED) · e^(-n / K_DECAY)
+#
+# which is the shape every comparable system uses. chess.com steps 40 → 20 → 10,
+# the USCF divides by (N + m), Glicko and Codeforces carry an uncertainty that
+# narrows; all of them move a newcomer several times as far as a veteran. The
+# curve is chosen over the steps because a step is a cliff: under the old
+# 16-until-50-then-11 rule, a player's 49th game moved them 45% further than
+# their 51st, for no reason anyone could see on the board.
+#
+# Pitched a notch above chess.com's provisional 40 rather than at Codeforces,
+# where a first contest moves someone by hundreds. A first three-game session
+# here moves a newcomer by something like 80 points, which is loud enough to be
+# worth playing and quiet enough that one odd evening is not a verdict.
+K_NEW = 55          # the very first game: a first result should be loud
+K_SETTLED = 13      # a settled player. Everything on the board scales with this
+K_DECAY = 12        # games for the gap between the two to shrink by 1/e
+# Where the curve is close enough to settled to stop calling anyone new. Used
+# for what /tt help says, never in the maths.
+CALIBRATION_GAMES = 30
 
-# You control about half of a doubles match, so it carries about half the
-# evidence about *you*: your partner's play is in every result, and none of it
-# is yours.
+# In table tennis doubles the pair *alternates strokes* — it is a rule of the
+# game, not a tactic — so a doubles result is about half yours and half your
+# partner's, and it carries about half the evidence about you.
 DOUBLES_K_FACTOR = 0.5
+# Except on the doubles ladder itself, which is a ladder of how people play in
+# pairs. There the result is the whole of the evidence, not half of it; the
+# discount that remains is for the partner you did not choose.
+DOUBLES_OWN_K_FACTOR = 0.8
 
 # The margin curve is calibrated on a game to 11: mov == 1.0 at a 4-point margin,
 # which is a normal, clearly-won 11-7.
@@ -74,16 +109,45 @@ def expected(rating_a, rating_b):
     return 1.0 / (1.0 + 10 ** ((rating_b - rating_a) / 400.0))
 
 
-def k_factor(games_played, doubles=False):
-    """How hard one *game* may move a rating.
+def k_factor(games_played, doubles=False, doubles_factor=None):
+    """How hard one *game* may move the rating of someone who has played
+    `games_played` of them.
 
-    Each player brings their own K — a newcomer's rating moves further than the
-    veteran's in the very same game. That deliberately breaks strict zero-sum
-    (the pool gains a little when a provisional player wins); converging
+    Smooth, and steep at the start: game 1 moves a player about four times as
+    far as game 100. That is the whole point — a newcomer's 1000 is a guess, and
+    a rating system that takes forty games to correct it has spent forty games
+    telling everyone something it knew to be wrong.
+
+    Each player brings their own K, so a newcomer's rating moves further than
+    the veteran's in the very same game. That deliberately breaks strict
+    zero-sum — the pool gains a little when a new player wins — and converging
     newcomers quickly is worth more here than conserving points exactly.
     """
-    k = K_PROVISIONAL if games_played < PROVISIONAL_GAMES else K_ESTABLISHED
-    return k * DOUBLES_K_FACTOR if doubles else float(k)
+    k = K_SETTLED + (K_NEW - K_SETTLED) * math.exp(-max(0, games_played) / K_DECAY)
+    if not doubles:
+        return k
+    return k * (DOUBLES_K_FACTOR if doubles_factor is None else doubles_factor)
+
+
+def session_k(games_played, length, doubles=False, doubles_factor=None):
+    """The K one player brings to a whole session: the mean of the K they would
+    have carried into each of its games.
+
+    One K for the session, not one per game, and that is deliberate. A session
+    is rated as a sum of its games, and if each game carried its own K then a
+    2–2 split would no longer come to nothing — the two wins would be worth more
+    than the two losses purely because they were typed first. Order would start
+    to matter, and the model promises it doesn't.
+
+    Taking the mean keeps both properties and still does the work: a newcomer's
+    ten-game first evening is rated at the K of about their fifth game rather
+    than their first, so it converges instead of overshooting.
+    """
+    if length <= 0:
+        return k_factor(games_played, doubles, doubles_factor)
+    total = sum(k_factor(games_played + i, doubles, doubles_factor)
+                for i in range(length))
+    return total / length
 
 
 def mov_multiplier(margin, winner_points=None):
@@ -136,35 +200,50 @@ def team_rating(side):
 
 
 def games_played(player):
-    """Games, not sessions — what K and the provisional period are measured in."""
+    """Games, not sessions — what K is measured in, and what it decays over."""
     return int(player.get("games_won", 0)) + int(player.get("games_lost", 0))
 
 
-def session_weight(rating_a, rating_b, games):
-    """Σ over games of `mov · upset · (result − E)`, from side A's point of view.
+def session_weights(rating_a, rating_b, games):
+    """One `mov · upset · (result − E)` per game, from side A's point of view.
 
-    This is the whole rating signal; a player's change is just their own K times
-    this. Side B's weight is exactly the negative of it — same mov, same upset
+    Per game rather than summed, because K is per game too: a player's tenth
+    game of the evening should not move them as far as their first did. A dead
+    heat contributes 0.0 rather than being dropped, so the list stays aligned
+    with the games it came from and the K counter advances over it.
+
+    Side B's weights are exactly the negatives of these — same mov, same upset
     correction, and (1−result) − (1−E) == −(result − E) — which is what keeps
     the model zero-sum for players on the same K.
     """
     exp_a = expected(rating_a, rating_b)
-    total = 0.0
+    out = []
     for a, b in games:
         if a == b:
-            continue  # a dead-even game decided nothing
+            out.append(0.0)  # a dead-even game decided nothing
+            continue
         won_a = a > b
         gap = (rating_a - rating_b) if won_a else (rating_b - rating_a)
         weight = mov_multiplier(a - b, max(a, b)) * upset_correction(gap)
-        total += weight * ((1.0 if won_a else 0.0) - exp_a)
-    return total
+        out.append(weight * ((1.0 if won_a else 0.0) - exp_a))
+    return out
 
 
-def rate_match(side_a, side_b, games):
+def session_weight(rating_a, rating_b, games):
+    """The whole session's signal, from side A's point of view. Informational
+    now that K is applied per game — the summary blob reports it."""
+    return sum(session_weights(rating_a, rating_b, games))
+
+
+def rate_match(side_a, side_b, games, doubles_factor=None):
     """Rate one session and return everything needed to store and narrate it.
 
     side_a / side_b: [{"uid": str, "rating": int, "games": int}, …] — one entry
     for singles, two for doubles. `games`: [(a_points, b_points), …], any length.
+
+    `doubles_factor` overrides how much a doubles result counts; the doubles
+    ladder passes DOUBLES_OWN_K_FACTOR, because there the result is the whole of
+    the evidence rather than half of it.
 
     Ratings are read from the arguments, so the caller must pass *current*
     ratings: a session is always rated at the moment it is confirmed, never at
@@ -176,15 +255,22 @@ def rate_match(side_a, side_b, games):
     rating_a, rating_b = team_rating(side_a), team_rating(side_b)
 
     exp_a = expected(rating_a, rating_b)
-    weight_a = session_weight(rating_a, rating_b, games)
+    weights = session_weights(rating_a, rating_b, games)
+    weight_a = sum(weights)
     decided = games_a + games_b
 
     deltas, before, after = {}, {}, {}
-    for side, weight in ((side_a, weight_a), (side_b, -weight_a)):
+    for side, sign in ((side_a, weight_a), (side_b, -weight_a)):
         for p in side:
-            k = k_factor(p.get("games", 0), doubles=doubles)
+            # The K of the session, which is the mean of the K this player
+            # carried into each of its games — so a long first evening converges
+            # rather than overshooting, and a session that splits evenly still
+            # comes to nothing whatever order it was typed in.
+            k = session_k(p.get("games", 0), len(weights), doubles=doubles,
+                          doubles_factor=doubles_factor)
+            swing = k * sign
             rating = int(p["rating"])
-            new = max(RATING_FLOOR, rating + _round_half_away(k * weight))
+            new = max(RATING_FLOOR, rating + _round_half_away(swing))
             before[p["uid"]] = rating
             after[p["uid"]] = new
             # Read the delta back off the floor-clamped result, so the number we

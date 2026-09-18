@@ -1545,8 +1545,10 @@ more when you win it decisively, and less when a big favourite wins it. \
 Doubles counts {int(elo.DOUBLES_K_FACTOR * 100)}% as hard as singles \
 — half of it is your partner.
 
-You're provisional (bigger swings) for your first {elo.PROVISIONAL_GAMES} games \
-and join the ladder proper after {PLACEMENT_GAMES}. Full details: \
+Your first games move you hardest — game one counts about {int(round(elo.K_NEW / elo.K_SETTLED))}x a \
+settled player's, easing off over your first {elo.CALIBRATION_GAMES} or so, because \
+everyone's opening {elo.START_RATING} is a guess and the job of those games is to \
+replace it. You join the ladder proper after {PLACEMENT_GAMES}. Full details: \
 <https://github.com/praneatdata/tt-ranker#how-your-rating-is-calculated|the README>."""
 
 
