@@ -159,12 +159,12 @@ def test_the_ladder_filters_by_day_and_player(app, fake):
         assert "Matches &middot; today" in html and "1 match." in html
         # Only the match list is filtered — the standings still name everyone —
         # so the check looks inside the cards.
-        assert 'side-name">Cal<' in cards(html)
-        assert 'side-name">Bob<' not in cards(html)
+        assert '>Cal</a>' in cards(html)
+        assert '>Bob</a>' not in cards(html)
         html = app.get("/ladder?player=U0BBB1").data.decode()
         assert "Matches &middot; Bob" in html
-        assert 'side-name">Bob<' in cards(html)
-        assert 'side-name">Cal<' not in cards(html)
+        assert '>Bob</a>' in cards(html)
+        assert '>Cal</a>' not in cards(html)
 
 
 def test_bad_filter_values_fall_back_to_the_plain_list(app, fake):
@@ -286,7 +286,7 @@ def test_the_matches_page_filters_by_name(app, fake):
     with patch("bot.refresh_names"):
         html = app.get("/matches?q=ann").data.decode()
     assert html.count('<article class="match"') == 1
-    assert 'side-name">Ann<' in cards(html)
+    assert '>Ann</a>' in cards(html)
 
 
 def test_a_search_term_is_never_echoed_raw(app, fake):

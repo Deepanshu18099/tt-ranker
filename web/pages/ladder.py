@@ -110,10 +110,11 @@ def render(players, names, recent, week_delta, week_played, placement_games,
         _spins_board(spins or [], names, start_spins, circulating, wallets)
         if on_spins else "",
         "" if on_spins else _featured(ranked, placing, names, placement_games,
-                                      delta, played, form, log_href, known, titles),
+                                      delta, played, form, log_href, known,
+                                      titles, view),
         "" if on_spins else _board(ranked, names, delta, played, form, moves,
-                                   known, titles),
-        "" if on_spins else _placing(placing, names, placement_games),
+                                   known, titles, view),
+        "" if on_spins else _placing(placing, names, placement_games, view),
         _of_the_week(history, week, names, view, titles),
         _recent(recent, names, players, filters or {}, view, titles),
     ) if part)
@@ -189,7 +190,7 @@ def _tabs(view):
 # --- the leader ------------------------------------------------------------
 
 def _featured(ranked, placing, names, placement_games, delta, played, form,
-              log_href, known=True, titles=None):
+              log_href, known=True, titles=None, view=""):
     """Whoever is top, at scoreboard size. Before anyone qualifies it counts
     down to the first ranked player instead of showing an empty panel."""
     if ranked:
@@ -212,7 +213,8 @@ def _featured(ranked, placing, names, placement_games, delta, played, form,
               '<div class="featured-body">'
               '<p class="eyebrow bright">#1 on the ladder</p>'
               f'<div class="featured-who">{c.avatar(uid, names, "avatar-lg")}'
-              f'<span class="featured-name">{c.e(display_name(uid, names))}</span></div>'
+            + c.player_link(uid, names, view, classes="featured-name")
+            + "</div>"
             + f'<div class="featured-tags">{c.titles_of(uid, titles)}'
               f'{streak}{strip}</div>'
             + "</div>"
@@ -245,7 +247,8 @@ def _featured(ranked, placing, names, placement_games, delta, played, form,
 
 # --- the board -------------------------------------------------------------
 
-def _board(ranked, names, delta, played, form, moves, known=True, titles=None):
+def _board(ranked, names, delta, played, form, moves, known=True, titles=None,
+           view=""):
     """The standings. `known` is False when this view has no way to work out
     weekly movement, in which case the column simply isn't there — better than
     reporting a change of zero that nobody measured."""
@@ -258,9 +261,10 @@ def _board(ranked, names, delta, played, form, moves, known=True, titles=None):
             f'<span class="row-rank"><span class="pos num">{i:02d}</span>'
             f'{c.rank_move(moves.get(uid, 0))}</span>'
             f'<span class="row-who">{c.avatar(uid, names)}'
-            f'<span class="row-name">{c.e(display_name(uid, names))}</span>'
-            f'{c.titles_of(uid, titles, limit=1)}</span>'
-            f'<span class="row-meta">{c.record(player)} &middot; '
+            + c.player_link(uid, names, view, classes="row-name")
+            + c.titles_of(uid, titles, limit=1)
+            + "</span>"
+            + f'<span class="row-meta">{c.record(player)} &middot; '
             f'{c.games_line(player)}{c.streak_badge(player["streak"])}</span>'
             f'<span class="row-form">'
             f'{c.form_strip(form.get(uid, ""), label=False)}</span>'
@@ -273,15 +277,15 @@ def _board(ranked, names, delta, played, form, moves, known=True, titles=None):
             f'<ol class="board">{"".join(rows)}</ol></section>')
 
 
-def _placing(placing, names, placement_games):
+def _placing(placing, names, placement_games, view=""):
     if not placing:
         return ""
     chips = []
     for uid, player in placing[:24]:
         need = placement_games - elo.games_played(player)
         chips.append(f'<li>{c.avatar(uid, names, "avatar-sm")}'
-                     f'<span>{c.e(display_name(uid, names))}</span>'
-                     f'<span class="need num">{need} to go</span></li>')
+                     + c.player_link(uid, names, view)
+                     + f'<span class="need num">{need} to go</span></li>')
     return ('<section class="wrap rise">'
             '<div class="section-head"><h2>Still placing</h2></div>'
             f'<p class="note wide">{placement_games} games and you join the standings '
@@ -348,8 +352,9 @@ def _spins_board(spins, names, start_spins, circulating, wallets=None):
             f'<li class="row{" is-top" if i == 1 else ""}">'
             f'<span class="row-rank"><span class="pos num">{i:02d}</span></span>'
             f'<span class="row-who">{c.avatar(uid, names)}'
-            f'<span class="row-name">{c.e(display_name(uid, names))}</span></span>'
-            f'<span class="row-meta">opened with {start_spins:,}</span>'
+            + c.player_link(uid, names, classes="row-name")
+            + "</span>"
+            + f'<span class="row-meta">opened with {start_spins:,}</span>'
             f'<span class="row-score"><span class="rating num">{held:,}</span>'
             f'{move}</span></li>')
     total = circulating if circulating is not None else sum(h for _, h, _ in spins)

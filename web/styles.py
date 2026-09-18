@@ -70,6 +70,30 @@ section.wrap+section.wrap:has(>.note){margin-top:var(--s4)}
 .title-holder{display:flex;align-items:center;gap:var(--s2);margin-top:auto;
   padding-top:var(--s3);border-top:1px solid var(--line);font-weight:600}
 .title-holder.is-vacant{color:var(--muted);font-weight:400;font-style:italic}
+/* Turning up: a square per day. No chart library and no canvas — a heatmap is
+   a table of squares, and CSS already draws those. The four shades run through
+   tokens that already exist, so the graph follows the palette rather than
+   introducing a fifth colour to the page. */
+.heat-wrap{display:flex;gap:var(--s2);align-items:flex-start}
+.heat-days{display:grid;grid-template-rows:repeat(7,11px);gap:3px;
+  padding-top:18px;font-size:.5625rem;color:var(--muted)}
+.heat-day{line-height:11px}
+/* The grid scrolls on a phone rather than shrinking the squares to nothing. */
+.heat-scroll{overflow-x:auto;padding-bottom:var(--s1)}
+.heat-grid{display:flex;gap:3px}
+.heat-col{display:grid;grid-template-rows:repeat(7,11px);gap:3px}
+.heat{width:11px;height:11px;border-radius:2px;background:var(--wash);display:block}
+.heat-off{background:transparent}
+.heat-1{background:var(--up-bg)}
+.heat-2{background:var(--up-line)}
+.heat-3{background:var(--wood-deep)}
+.heat-4{background:var(--up)}
+.heat-months{display:flex;gap:3px;margin-top:var(--s1);
+  font-size:.5625rem;color:var(--muted)}
+.heat-month{width:11px;flex:none;white-space:nowrap}
+.heat-key{display:flex;align-items:center;gap:var(--s1);margin:var(--s3) 0 0;
+  font-size:.6875rem;color:var(--muted)}
+.heat-key-note{margin-left:auto}
 
 /* The micro-label that titles nearly every block on the page. */
 .eyebrow{margin:0;font-size:.6875rem;font-weight:700;letter-spacing:.17em;

@@ -833,6 +833,26 @@ is the answer, for five minutes: the weekly figures need a walk over the week's
 matches and no page should pay for that per request. Applying or undoing a match
 drops the cache in the same pipeline that writes the result, so a title never
 survives the match that took it away.
+**A player's own page.** `/player/<uid>` — their rating line per format, their
+record, their head-to-head against whoever they've played most, their matches,
+and **Turning up**: a square per day, darker the more they played, the way a
+contributions graph reads.
+
+The graph is drawn from the oldest session still on record rather than from a
+fixed year ago, because a player's history is trimmed to the last
+`PLAYER_HISTORY_LIMIT` matches. Every square on it is then a day we genuinely
+know about — an empty one means nobody played, never "that was thrown away", and
+the note above it says exactly what it covers. No chart library and no canvas: a
+heatmap is a table of squares and CSS already draws those, which is also what
+keeps the page making zero external requests. Every square carries its date and
+its count in words, so the graph is readable without seeing a single shade.
+
+**And a name goes to the person it names.** The ladder rungs, the featured
+panel, the still-placing list, the spins board, both sides of every match card,
+the player grid, the stats leaders and the compare tray all link to that page,
+through one helper — so nobody's name is a dead end on one page and a link on
+the next. The format tab you're reading travels with you
+(`/player/<uid>?view=doubles`) rather than dumping you back on Singles.
 
 **Names.** The page can't render a Slack mention, so it needs something to call
 people. Three tiers, best first:

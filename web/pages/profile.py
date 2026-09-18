@@ -17,7 +17,8 @@ RIVALS_SHOWN = 6
 
 def render(uid, player, players, names, history=(), week="", view="",
            placement_games=4, rank=None, delta=0, played=0, known=True,
-           versus="", log_href="", channel_hint="", updated="", titles=None):
+           versus="", log_href="", channel_hint="", updated="", titles=None,
+           now=None):
     name = c.display_name(uid, names)
     games = elo.games_played(player)
     form = derive.form(history, view, limit=FORM_SHOWN).get(uid, "")
@@ -29,6 +30,7 @@ def render(uid, player, players, names, history=(), week="", view="",
                     placement_games, games, titles)]
     body.append(_figures(player, games, form))
     body.append(_chart(history, uid, view))
+    body.append(_turnout(history, uid, view, now))
     body.append(_versus(uid, mine, names, view, versus))
     body.append(_matches(mine, names, view, titles))
     return layout.document(f"{name} — RALLY", "".join(part for part in body if part),
@@ -106,6 +108,32 @@ def _chart(history, uid, view):
     move = c.movement(last - first, len(series) - 1, suffix="over this run")
     return c.section("Rating", c.rating_chart(series) + f'<p class="chart-move">{move}</p>',
                      eyebrow=f"{len(series) - 1} matches", classes="rise-2")
+
+
+def _turnout(history, uid, view, now):
+    """Who actually turns up, as a square per day.
+
+    Drawn from the oldest session still on record rather than from a fixed year
+    ago, because a player's history is trimmed to the last
+    `store.PLAYER_HISTORY_LIMIT` matches. Every square on the graph is then a
+    day we genuinely know about — an empty one means nobody played, never "that
+    was thrown away".
+    """
+    if not now:
+        return ""
+    columns, counts, span = derive.contributions(history, uid, now, view)
+    if not columns:
+        return ""
+    played = sum(counts.values())
+    start, end = span
+    return c.section(
+        "Turning up", c.heatmap(columns, counts, span),
+        eyebrow=f"{played} match{'es' if played != 1 else ''} on {len(counts)} "
+                f"day{'s' if len(counts) != 1 else ''}",
+        note=f"Every session on record, from {start.day} "
+             f"{c.MONTHS[start.month - 1]} {start.year} onwards — as far back as "
+             "the ladder keeps this player's matches.",
+        classes="rise-2")
 
 
 def _versus(uid, mine, names, view, versus):
