@@ -339,8 +339,23 @@ you play:
 | 100+ | 13 | settled |
 | Doubles | ×0.5 | ×0.8 on the doubles ladder itself |
 
-Game one moves you about **four times** as far as game one hundred, which is the
-ratio every comparable system uses — chess.com steps 40 → 20 → 10, the USCF
+**That is what you bring, not what you move.** A match is played for one stake
+that both sides share — the mean of what each player brought — because a ladder
+cannot move you further than your opponent in the same game *and* balance; the
+difference would have to be minted, and this one doesn't mint. So:
+
+| Who's playing | Stake | |
+|---|---|---|
+| two settled players | 13 | exactly as before — the established board is untouched |
+| two newcomers | 55 | calibration between new players is untouched too |
+| a newcomer and a settled player | 34 | they meet in the middle |
+
+The last row is the price of a closed system, and it cuts the right way: a
+settled player who loses to an unknown has learned something about themselves
+too. A newcomer still converges about 2.6× faster than the old rule managed.
+
+You bring about **four times** as much to game one as to game one hundred, which
+is the ratio every comparable system uses — chess.com steps 40 → 20 → 10, the USCF
 divides by (N + m), Glicko and Codeforces carry an uncertainty that narrows. The
 opening 55 is pitched a notch above chess.com's provisional 40 and well short of
 Codeforces, where a first contest moves someone by hundreds: a first three-game
@@ -498,12 +513,15 @@ direction you earned — a 20-game session you lose 6–14 costs far more than a
 3-game one. It cuts exactly as hard both ways.
 
 **Is the total rating in the system conserved?**
-Between two established players, exactly — the winner gains precisely what the
-loser drops, at any session length, and a doubles result nets to zero across all
-four. The one exception is deliberate: a newer player carries a bigger K
-than their established opponent, so a newcomer's early games add a few points to
-the pool. Converging newcomers quickly is worth more than a perfectly closed
-system.
+Yes, exactly — the winner gains precisely what the loser drops, at any session
+length, in singles and in doubles, whoever is playing. Every match sums to zero
+and there is a test that says so. Nothing mints rating and nothing burns it,
+which is what makes a 1200 today the same claim as a 1200 last month.
+
+That is why the two sides share one stake rather than each bringing their own K
+(see below). A player pinned on the rating floor is the other half of it: they
+have nothing left to lose, so their opponent is trimmed to what was actually
+paid rather than handed the difference.
 
 **Why is a nail-biting 3–0 worth less than a comfortable 2–1?**
 Because the points say the first session was closer. See the table above.

@@ -394,3 +394,90 @@ def test_the_two_spellings_of_a_skunk_rate_identically():
 def test_a_skunk_still_conserves_the_pool():
     r = rate(P("a", 1200), P("b", 900), [(11, 0)])
     assert sum(r["deltas"].values()) == 0
+
+
+# --- the books balance -----------------------------------------------------
+
+CONSERVATION_CASES = {
+    "two settled players": ([P("a", 1100)], [P("b", 1000)], CLOSE_WIN),
+    "two newcomers": ([P("a", games=0)], [P("b", games=0)], SWEEP),
+    "a newcomer beating a veteran": ([P("a", games=0)], [P("b", games=400)], SWEEP),
+    "a newcomer losing to one": ([P("a", games=0)], [P("b", games=400)],
+                                 [(4, 11)] * 3),
+    "mid-calibration, either way": ([P("a", games=7)], [P("b", games=90)], TIGHT),
+    "a long session": ([P("a", games=0)], [P("b", games=300)], [(11, 6)] * 9),
+    "a single game": ([P("a", games=2)], [P("b", games=250)], [(11, 9)]),
+    "a dead-even session": ([P("a", games=0)], [P("b", games=300)],
+                            [(11, 7), (7, 11)]),
+    "doubles, mixed experience": ([P("a1", 1200, 0), P("a2", 900, 300)],
+                                  [P("b1", 1030, 50), P("b2", 1010, 400)], SWEEP),
+    "doubles, one newcomer on each side": ([P("a1", 1100, 0), P("a2", 1000, 200)],
+                                           [P("b1", 1050, 0), P("b2", 990, 200)],
+                                           CLOSE_WIN),
+    "a big rating gap": ([P("a", 1600, 0)], [P("b", 800, 500)], SWEEP),
+}
+
+
+@pytest.mark.parametrize("name", sorted(CONSERVATION_CASES))
+def test_a_match_mints_nothing_and_burns_nothing(name):
+    """The property the whole ladder rests on: a rating is only a claim against
+    everyone else's, so every point that appears has to come from somebody."""
+    side_a, side_b, games = CONSERVATION_CASES[name]
+    assert sum(rate(side_a, side_b, games)["deltas"].values()) == 0
+
+
+@pytest.mark.parametrize("name", sorted(CONSERVATION_CASES))
+def test_what_was_paid_is_what_the_ratings_did(name):
+    """The reported delta and the stored rating can never disagree — a match
+    that says +9 has to leave the player 9 higher."""
+    side_a, side_b, games = CONSERVATION_CASES[name]
+    rated = rate(side_a, side_b, games)
+    for uid, delta in rated["deltas"].items():
+        assert rated["after"][uid] - rated["before"][uid] == delta
+
+
+def test_the_two_sides_share_one_stake():
+    """Not each their own: a newcomer cannot move further than their opponent in
+    the same game *and* have the books balance. The extra would be minted."""
+    assert elo.match_k([P("a", games=0), P("b", games=0)], 3) == \
+        pytest.approx(elo.session_k(0, 3))
+    assert elo.match_k([P("a", games=900), P("b", games=900)], 3) == \
+        pytest.approx(elo.session_k(900, 3))
+    # A newcomer and a veteran meet in the middle.
+    mixed = elo.match_k([P("a", games=0), P("b", games=900)], 3)
+    assert elo.session_k(900, 3) < mixed < elo.session_k(0, 3)
+
+
+def test_the_settled_board_does_not_feel_the_change():
+    """Two established players are the common case, and their stake is exactly
+    K_SETTLED, so conserving cost them nothing."""
+    assert elo.match_k([P("a", games=500), P("b", games=500)], 1) == \
+        pytest.approx(elo.K_SETTLED)
+
+
+def test_a_newcomer_still_converges_far_faster_than_the_old_rule():
+    """Sharing the stake costs a newcomer some speed against a veteran. It must
+    not cost so much that calibration stops being worth having: the old rule's
+    provisional K was 16."""
+    assert elo.match_k([P("a", games=0), P("b", games=900)], 3) > 2 * 16
+
+
+def test_nothing_is_created_when_the_loser_is_on_the_floor():
+    """They have nothing left to give, so their opponent cannot be handed it."""
+    rated = rate(P("w", 150), P("l", elo.RATING_FLOOR), SWEEP)
+    assert rated["deltas"]["l"] == 0
+    assert rated["deltas"]["w"] == 0
+    # And on the way down to it, the winner takes only what was really paid.
+    near = rate(P("w", 150), P("l", elo.RATING_FLOOR + 5), SWEEP)
+    assert sum(near["deltas"].values()) == 0
+    assert near["after"]["l"] == elo.RATING_FLOOR
+
+
+def test_a_floored_partner_does_not_cost_their_opponents_unevenly():
+    """Two winners trimmed by an odd number still come out within a point of
+    each other, rather than one of them absorbing the whole correction."""
+    rated = rate([P("w1", 300), P("w2", 300)],
+                 [P("l1", elo.RATING_FLOOR), P("l2", elo.RATING_FLOOR)], SWEEP)
+    gains = [rated["deltas"]["w1"], rated["deltas"]["w2"]]
+    assert abs(gains[0] - gains[1]) <= 1
+    assert sum(rated["deltas"].values()) == 0

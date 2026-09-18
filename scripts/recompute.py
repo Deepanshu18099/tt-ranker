@@ -61,7 +61,7 @@ def main(argv):
 
     doubles = sum(1 for b in blobs if b.get("doubles"))
     print(f"Replaying {len(blobs)} matches ({doubles} doubles) with:")
-    print(f"  K {elo.K_NEW:g}→{elo.K_SETTLED:g} over ~{elo.K_DECAY} games · "
+    print(f"  K {elo.K_NEW:g}→{elo.K_SETTLED:g} over ~{elo.K_DECAY} games, shared · "
           f"doubles ×{elo.DOUBLES_K_FACTOR} (own ladder ×"
           f"{elo.DOUBLES_OWN_K_FACTOR}) · mov gain {elo.MOV_GAIN} · "
           f"baseline {elo.MOV_BASELINE}\n")
