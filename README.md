@@ -711,6 +711,21 @@ and they are plain links and a form — no script needed for them to work. The
 same filters are in Slack: `/tt history @bob today`, `/tt history week`,
 `/tt history 2026-09-16`. Days are read in IST, like everything else here.
 
+**Themes.** Five tables to play on: the blue tournament top it was drawn from,
+a green one, a neutral *Slate*, a light *Daylight* for a bright desk or a
+projector, and a near-black *Midnight* for a dim room. The picker is the swatch
+in the top bar; the choice is kept in the browser, so it follows you around the
+site but is yours alone — nothing about it is stored on the server or shared
+with the channel. Someone who has never touched it gets the blue table, unless
+their machine is set to a light appearance, in which case they get Daylight.
+
+Adding a sixth is choosing eleven colours in [web/tokens.py](web/tokens.py) and
+nothing else: everything derived from them — the tints behind chips, the
+hairlines, the avatar colours, the bar's translucency — is worked out from those
+eleven, and there is a test that the stylesheet names no colour of its own.
+Every theme clears WCAG AA on body text, muted text and text on a filled
+control, and that is asserted rather than eyeballed.
+
 **Names.** The page can't render a Slack mention, so it needs something to call
 people. Three tiers, best first:
 

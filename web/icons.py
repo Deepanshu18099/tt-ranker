@@ -54,6 +54,12 @@ def arrow_down():
     return _icon('<path d="M12 5v14M18 13l-6 6-6-6"/>')
 
 
+def palette():
+    """Which table you'd rather play on. A ball, and the swatch it sits on."""
+    return _icon('<path d="M4 6h16v12H4z"/><circle cx="12" cy="12" r="2.6"/>'
+                 '<path d="M8 6v12"/>')
+
+
 # --- brand geometry --------------------------------------------------------
 # Abstract, never illustrative: an arc is the flight of a rally, a circle is the
 # ball, a straight run of hairlines is the table. They sit behind content at low
