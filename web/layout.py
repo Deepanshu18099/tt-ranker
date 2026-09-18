@@ -4,6 +4,7 @@ Navigation is deliberately honest about what exists. Matches, Players and Stats
 are the planned pages and they appear in the bar so the shape of the product is
 legible, marked `soon` and not linked, rather than linked to a 404.
 """
+from . import brand as vmock
 from . import components as c
 from . import icons, styles, tokens
 
@@ -285,9 +286,18 @@ SCRIPT = f"""
 
 
 def brand(href="/ladder"):
-    return (f'<a class="brand" href="{c.e(href)}" aria-label="RALLY, table tennis league">'
+    """Whose league this is, then what it is.
+
+    The VMock badge leads and RALLY's own wordmark follows it, because a
+    stranger opening the link in the channel should be able to tell in one look
+    that this is ours. One link, one label: the mark is decorative inside it.
+    """
+    return (f'<a class="brand" href="{c.e(href)}" '
+            'aria-label="VMock Rally, table tennis league">'
+            + vmock.mark() +
+            '<span class="brand-words">'
             '<span class="brand-mark"><span class="ball"></span>Rally</span>'
-            '<span class="brand-sub">Table Tennis League</span></a>')
+            '<span class="brand-sub">Table Tennis League</span></span></a>')
 
 
 def _links(current, in_menu=False):

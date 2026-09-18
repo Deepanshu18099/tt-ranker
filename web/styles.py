@@ -65,8 +65,12 @@ NAV = """
   border-bottom:1px solid var(--line-mid);backdrop-filter:blur(12px)}
 @supports not (backdrop-filter:blur(2px)){.nav{background:var(--bg)}}
 .nav-in{display:flex;align-items:center;gap:var(--s4);min-height:60px}
-.brand{display:flex;flex-direction:column;justify-content:center;line-height:1;
+.brand{display:flex;align-items:center;gap:.55rem;line-height:1;
   padding:var(--s2) 0;margin-right:var(--s2)}
+.brand-words{display:flex;flex-direction:column;justify-content:center}
+/* The one image on the site. Round, because the mark is — a square box around
+   it would read as a missing asset rather than a logo. */
+.vmock{width:28px;height:28px;flex:none;border-radius:50%;display:block}
 .brand-mark{display:flex;align-items:center;gap:.45rem;font-size:1.0625rem;
   font-weight:700;letter-spacing:.2em;text-transform:uppercase}
 .brand-mark .ball{width:7px;height:7px;border-radius:50%;background:var(--ball);
