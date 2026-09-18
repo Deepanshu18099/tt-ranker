@@ -106,6 +106,18 @@ def test_a_thinner_week_loses_the_tie():
     assert table["hot"] == A          # both perfect, A played more
 
 
+def test_a_thinner_week_loses_the_tie_at_the_cold_end_too():
+    """The tiebreak has to point the same way whichever end of the table it is
+    settling: 0-from-4 is a larger claim to the worst week going than 0-from-3.
+    Reversing the whole sort for a `min` title reverses this with it."""
+    players = {A: player(), B: player(), C: player(), D: player()}
+    table = awards.compute(players, week(
+        match([C], [A]), match([C], [A]), match([C], [A]), match([C], [A]),
+        match([D], [B]), match([D], [B]), match([D], [B])))
+    assert table["cold"] == A          # both winless, A played more
+    assert table["hot"] == C           # and the other end still works
+
+
 def test_somebody_not_on_the_ladder_cannot_hold_a_title():
     """A match blob outlives a player record; a title should not."""
     table = awards.compute({A: player()}, week(

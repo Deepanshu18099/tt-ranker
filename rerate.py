@@ -105,7 +105,9 @@ def replay(blobs):
 def write(state, rewritten, weekly, before=None):
     """Commit a replay. `before` supplies the joined-on dates to preserve."""
     before = before if before is not None else store.get_players(list(state))
-    writes = []
+    # A replay rewrites the results titles are computed from, so it takes the
+    # cached table with it — the same way applying and undoing a match do.
+    writes = [["DEL", store.TITLES_KEY]]
     for uid, player in state.items():
         # Keep the day they joined; everything else is derived from the replay.
         player["joined"] = (before.get(uid) or {}).get("joined") or player["joined"]

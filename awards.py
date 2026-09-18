@@ -80,11 +80,19 @@ def match_records(blobs):
 
 def _pick(candidates, best=max):
     """The holder, or None. `candidates` is [(uid, score, played)]; ties go to
-    whoever played more, and a title nobody can uniquely claim goes unheld."""
+    whoever played more, and a title nobody can uniquely claim goes unheld.
+
+    The two keys sort in *different* directions for a `min` title. Reversing the
+    whole sort instead would reverse the tiebreak with it, and hand Ice Cold to
+    whoever played least — 0-from-3 over 0-from-8, which is the smaller claim to
+    being the worst week going, not the larger one.
+    """
     if not candidates:
         return None
-    ranked = sorted(candidates, key=lambda item: (item[1], item[2]),
-                    reverse=(best is max))
+    ranked = sorted(candidates,
+                    key=lambda item: (item[1] if best is max else -item[1],
+                                      item[2]),
+                    reverse=True)
     if len(ranked) > 1:
         first, second = ranked[0], ranked[1]
         if (first[1], first[2]) == (second[1], second[2]):
