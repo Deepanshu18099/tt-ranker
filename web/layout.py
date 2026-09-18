@@ -6,7 +6,7 @@ legible, marked `soon` and not linked, rather than linked to a 404.
 """
 from . import brand as vmock
 from . import components as c
-from . import icons, styles
+from . import icons, styles, tokens
 
 REFRESH_SECONDS = 60
 
@@ -16,6 +16,39 @@ NAV_ITEMS = (
     ("Players", "/players", True),
     ("Stats", "/stats", True),
 )
+
+THEME_KEY = "rally-theme"
+
+# Runs in <head>, before anything is painted. It is the one script on the page
+# that cannot wait for the body: set the theme afterwards and the reader watches
+# the page change colour, which is worse than not offering themes at all.
+THEME_SCRIPT = f"""
+(function(){{
+  var KEY = '{THEME_KEY}', root = document.documentElement;
+  function saved(){{
+    /* Storage throws outright in some privacy modes, and a theme is not worth
+       taking the page down for. */
+    try {{ return localStorage.getItem(KEY) || ''; }} catch (e) {{ return ''; }}
+  }}
+  function apply(name){{
+    if (name && name !== '{tokens.DEFAULT_THEME}') root.setAttribute('data-theme', name);
+    else root.removeAttribute('data-theme');
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {{
+      var bg = getComputedStyle(root).getPropertyValue('--bg').trim();
+      if (bg) meta.setAttribute('content', bg);
+    }}
+  }}
+  var chosen = saved();
+  /* Nobody has chosen: a table is blue, so that is the default — unless the
+     reader's whole machine is set light, in which case honour that. */
+  if (!chosen && window.matchMedia
+      && window.matchMedia('(prefers-color-scheme: light)').matches) chosen = 'light';
+  apply(chosen);
+  window.RallyTheme = {{apply: apply, saved: saved, key: KEY}};
+}})();
+"""
+
 
 SCRIPT = f"""
 (function(){{
@@ -217,6 +250,33 @@ SCRIPT = f"""
     else if (ev.target === dialog) dialog.close();   /* the backdrop */
   }});
 
+  /* --- themes ---------------------------------------------------------- */
+  /* The control is hidden in the markup and revealed here: without script it
+     would be a row of buttons that do nothing, which is worse than no row. */
+  var themes = document.getElementById('themes');
+  if (themes && window.RallyTheme) {{
+    themes.hidden = false;
+    var mark = function(){{
+      var now = RallyTheme.saved() || '{tokens.DEFAULT_THEME}';
+      var opts = themes.querySelectorAll('[data-theme-set]');
+      for (var i = 0; i < opts.length; i++) {{
+        var on = opts[i].getAttribute('data-theme-set') === now;
+        opts[i].classList.toggle('on', on);
+        opts[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+      }}
+    }};
+    mark();
+    themes.addEventListener('click', function(ev){{
+      var opt = ev.target.closest && ev.target.closest('[data-theme-set]');
+      if (!opt) return;
+      var name = opt.getAttribute('data-theme-set');
+      try {{ localStorage.setItem(RallyTheme.key, name); }} catch (e) {{}}
+      RallyTheme.apply(name);
+      mark();
+      themes.open = false;
+    }});
+  }}
+
   window.addEventListener('popstate', function(){{
     if (soft) load(location.href, {{push: false}});
   }});
@@ -265,10 +325,38 @@ def nav(current="Ladder", log_href=""):
         + brand()
         + f'<nav class="nav-links" aria-label="Sections">{_links(current)}</nav>'
         + f'<div class="nav-cta">{cta}'
+        + theme_picker()
         + '<details class="menu" id="menu"><summary aria-label="Menu">'
         + icons.menu() + "</summary>"
         + f'<div class="menu-panel">{_links(current, in_menu=True)}</div></details>'
         + "</div></div></header>")
+
+
+def theme_picker():
+    """Which table to play on.
+
+    A <details> like the menu beside it, so it opens and closes with no script
+    and is keyboard-operable for free — but it ships `hidden`, because the
+    choosing itself needs script and a dead control is worse than none. The
+    swatches are literal hex rather than custom properties: each one is a
+    preview of a theme that isn't currently applied, so it cannot be var().
+    """
+    options = []
+    for name in tokens.THEME_ORDER:
+        spec = tokens.THEMES[name]
+        colours = spec["colors"]
+        swatch = (f'<span class="swatch" aria-hidden="true" style="background:'
+                  f'{colours["bg"]};border-color:{colours["ball"]}">'
+                  f'<span style="background:{colours["wood"]}"></span>'
+                  f'<span style="background:{colours["paddle"]}"></span></span>')
+        options.append(
+            f'<button type="button" class="theme-opt" data-theme-set="{c.e(name)}" '
+            f'aria-pressed="false">{swatch}{c.e(spec["label"])}</button>')
+    return (
+        '<details class="menu themes" id="themes" hidden>'
+        f'<summary aria-label="Colour theme">{icons.palette()}</summary>'
+        '<div class="menu-panel" role="group" aria-label="Colour theme">'
+        + "".join(options) + "</div></details>")
 
 
 def footer(log_href="", channel_hint="", updated=""):
@@ -300,10 +388,11 @@ def document(title, body, current="Ladder", log_href="", channel_hint="", update
         "<!doctype html>\n"
         '<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<meta name="color-scheme" content="dark">'
-        '<meta name="theme-color" content="#0C2559">'
+        '<meta name="color-scheme" content="dark light">'
+        f'<meta name="theme-color" content="{tokens.COLORS["bg"]}">'
         f"<title>{c.e(title)}</title>"
-        f"<style>{styles.stylesheet()}</style></head>"
+        f"<style>{styles.stylesheet()}</style>"
+        f"<script>{THEME_SCRIPT}</script></head>"
         "<body>"
         '<div class="loading" aria-hidden="true"></div>'
         + nav(current, log_href)

@@ -61,7 +61,7 @@ h2{font-size:1.35rem;letter-spacing:-.02em}
 """
 
 NAV = """
-.nav{position:sticky;top:0;z-index:20;background:rgba(12,37,89,.88);
+.nav{position:sticky;top:0;z-index:20;background:var(--nav-bg);
   border-bottom:1px solid var(--line-mid);backdrop-filter:blur(12px)}
 @supports not (backdrop-filter:blur(2px)){.nav{background:var(--bg)}}
 .nav-in{display:flex;align-items:center;gap:var(--s4);min-height:60px}
@@ -87,10 +87,10 @@ NAV = """
 .nav-link:hover{color:var(--text)}
 .nav-link.on{color:var(--text)}
 .nav-link.on::after{transform:scaleX(1)}
-.nav-link.soon{color:rgba(142,168,172,.55);cursor:default}
-.nav-link.soon:hover{color:rgba(142,168,172,.55)}
+.nav-link.soon{color:var(--soon);cursor:default}
+.nav-link.soon:hover{color:var(--soon)}
 .nav-link .soon-tag{margin-left:.35rem;font-size:.5rem;letter-spacing:.12em;
-  color:rgba(142,168,172,.5);vertical-align:.15em}
+  color:var(--soon);vertical-align:.15em}
 .nav-cta{margin-left:auto;display:flex;align-items:center;gap:var(--s2)}
 
 /* Mobile menu: a <details> disclosure, so it opens with no script and is
@@ -107,6 +107,24 @@ NAV = """
 .menu-panel .nav-link{padding:.6rem .7rem;border-radius:var(--r-sm)}
 .menu-panel .nav-link.on{background:var(--raised)}
 .menu-panel .nav-link::after{display:none}
+
+/* The theme picker is the same disclosure as the menu, so it needs no rules of
+   its own beyond the swatches. Each swatch is a table seen from above: the
+   ground, the white edge, and the two accents laid across it. */
+.themes{margin-left:0}
+.themes .menu-panel{min-width:200px}
+.theme-opt{display:flex;align-items:center;gap:var(--s3);width:100%;
+  padding:.5rem .6rem;border:0;border-radius:var(--r-sm);background:transparent;
+  color:var(--muted);font:600 .8125rem/1 var(--sans);text-align:left;cursor:pointer}
+.theme-opt:hover{background:var(--raised);color:var(--text)}
+.theme-opt.on{background:var(--raised);color:var(--text)}
+/* The held option is marked by the ball as well as by the fill, because the
+   fill alone is a colour difference and colour is never the only signal. */
+.theme-opt.on::after{content:"";width:7px;height:7px;margin-left:auto;
+  border-radius:50%;background:var(--ball);flex:none}
+.swatch{position:relative;display:flex;align-items:flex-end;gap:2px;
+  width:26px;height:18px;padding:2px;border:1px solid;border-radius:3px;flex:none}
+.swatch span{display:block;flex:1;height:5px;border-radius:1px}
 """
 
 BUTTONS = """
@@ -119,7 +137,7 @@ BUTTONS = """
 .btn:hover{background:var(--raised);border-color:var(--line-strong)}
 .btn:active{transform:translateY(1px)}
 .btn-primary{background:var(--ball);border-color:var(--ball);color:var(--ink);font-weight:700}
-.btn-primary:hover{background:#E6EEFF;border-color:#E6EEFF;color:var(--ink)}
+.btn-primary:hover{background:var(--ball-hover);border-color:var(--ball-hover);color:var(--ink)}
 .btn-icon{padding:.55rem;width:38px;height:38px;justify-content:center}
 @media (max-width:47.99rem){.btn-wide-only{display:none}}
 """
@@ -184,7 +202,7 @@ FEATURED = """
 .featured-in{position:relative;display:grid;gap:var(--s6)}
 .featured-rank{display:flex;align-items:baseline;gap:var(--s3)}
 .featured-rank .hash{font-size:clamp(3.5rem,17vw,6.5rem);font-weight:700;line-height:.78;
-  color:rgba(255,255,255,.10);-webkit-text-stroke:1.5px rgba(255,255,255,.40)}
+  color:var(--ghost);-webkit-text-stroke:1.5px var(--ghost-line)}
 .featured-who{display:flex;align-items:center;gap:var(--s3);min-width:0}
 .featured-name{font-size:clamp(1.75rem,7vw,2.5rem);font-weight:700;letter-spacing:-.03em;
   line-height:1.05;overflow-wrap:anywhere}
@@ -265,7 +283,7 @@ PIECES = """
   font-weight:700;border:1px solid transparent}
 .form-cell.w{background:var(--up-bg);border-color:var(--up-line);color:var(--up)}
 .form-cell.l{background:var(--down-bg);border-color:var(--down-line);color:var(--down)}
-.form-cell.d{background:rgba(244,247,255,.07);border-color:var(--line-mid);color:var(--muted)}
+.form-cell.d{background:var(--wash);border-color:var(--line-mid);color:var(--muted)}
 .form-label{font-size:.5625rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
   color:var(--muted)}
 
@@ -325,7 +343,7 @@ MATCHES = """
   border-radius:var(--r-sm);padding:.4rem .6rem;transition:border-color .16s ease,
   background .16s ease,color .16s ease}
 .filters select,.filters input{color:var(--text);background:var(--surface)}
-.filters input{color-scheme:dark}
+.filters input{color-scheme:inherit}
 .filters a{font-size:.6875rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
   color:var(--muted)}
 .filters a:hover{color:var(--text);border-color:var(--line-strong)}
@@ -359,7 +377,7 @@ FOOTER = """
   text-transform:uppercase}
 .footer-links a{color:var(--muted)}
 .footer-links a:hover{color:var(--text)}
-.footer-links .soon{color:rgba(142,168,172,.45)}
+.footer-links .soon{color:var(--soon-dim)}
 .footer-note{margin:0;max-width:60ch;font-size:.8125rem;color:var(--muted)}
 .footer-note+.footer-note{margin-top:var(--s2)}
 .footer code{font-family:var(--mono);font-size:.8125rem;color:var(--text)}
@@ -450,7 +468,7 @@ a.pc:hover{border-color:var(--line-strong);background:var(--raised);transform:tr
 .profile{padding:var(--s12) 0 var(--s6)}
 .profile-in{display:grid;gap:var(--s4);align-items:center}
 .profile-rank .hash{font-size:clamp(2.5rem,12vw,4.5rem);font-weight:700;line-height:.8;
-  color:rgba(255,255,255,.10);-webkit-text-stroke:1.5px rgba(255,255,255,.40)}
+  color:var(--ghost);-webkit-text-stroke:1.5px var(--ghost-line)}
 .profile-rank .hash.is-placing{-webkit-text-stroke:1.5px var(--line-strong);
   color:transparent}
 .profile-who{min-width:0}
@@ -532,7 +550,7 @@ button.pc{width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
 .dialog{width:min(1180px,94vw);max-height:88vh;padding:0;color:var(--text);
   background:var(--bg);border:1px solid var(--line-strong);border-radius:var(--r-lg);
   overflow:hidden}
-.dialog::backdrop{background:rgba(4,14,36,.72)}
+.dialog::backdrop{background:var(--scrim)}
 .dialog-bar{display:flex;align-items:center;justify-content:space-between;
   gap:var(--s3);padding:var(--s3) var(--s4);border-bottom:1px solid var(--line-mid);
   background:var(--surface)}
@@ -590,10 +608,10 @@ button.pc{width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
 .chart-pair .chart-dot.l1{stroke:var(--wood)}
 .chart-pair .chart-line.l2{stroke:var(--paddle)}
 .chart-pair .chart-dot.l2{stroke:var(--paddle)}
-.chart-pair .chart-line.l3{stroke:#93B9FF}
-.chart-pair .chart-dot.l3{stroke:#93B9FF}
+.chart-pair .chart-line.l3{stroke:var(--avatar-3)}
+.chart-pair .chart-dot.l3{stroke:var(--avatar-3)}
 .legend-key.l2::before{background:var(--paddle)}
-.legend-key.l3::before{background:#93B9FF}
+.legend-key.l3::before{background:var(--avatar-3)}
 .legend{display:flex;flex-wrap:wrap;gap:var(--s4);margin:var(--s3) 0 0}
 .legend-key{display:inline-flex;align-items:center;gap:.4rem;font-size:.8125rem;
   color:var(--muted)}
@@ -620,7 +638,7 @@ button.pc{width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
   overflow:hidden;background:var(--raised)}
 .h2h-bar span{display:block;height:100%;transition:width .4s cubic-bezier(.2,.7,.3,1)}
 .h2h-bar .won{background:var(--up)}
-.h2h-bar .drew{background:rgba(244,247,255,.30)}
+.h2h-bar .drew{background:var(--wash-strong)}
 .h2h-bar .lost{background:var(--down)}
 .h2h-line{margin:0;color:var(--muted);font-size:.8125rem}
 .h2h-recent{display:flex;align-items:center;gap:3px;margin-top:var(--s3)}
@@ -630,7 +648,7 @@ button.pc{width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
   font-weight:700;border:1px solid transparent}
 .h2h-cell.w{background:var(--up-bg);border-color:var(--up-line);color:var(--up)}
 .h2h-cell.l{background:var(--down-bg);border-color:var(--down-line);color:var(--down)}
-.h2h-cell.d{background:rgba(244,247,255,.07);border-color:var(--line-mid);color:var(--muted)}
+.h2h-cell.d{background:var(--wash);border-color:var(--line-mid);color:var(--muted)}
 
 /* The numbers. */
 .sc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
@@ -744,7 +762,9 @@ RESPONSIVE = """
 }
 @media (min-width:64rem){
   .nav-links{display:flex}
-  .menu{display:none}
+  /* The nav collapses into the menu below this width; the theme picker is
+     not navigation and stays at every width. */
+  .menu:not(.themes){display:none}
   .row{grid-template-columns:2.6rem minmax(0,14rem) minmax(0,1fr) auto 7.5rem;
     grid-template-areas:"rank who meta form score";gap:var(--s4)}
   .row-meta{padding-left:0}
