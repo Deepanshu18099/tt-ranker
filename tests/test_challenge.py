@@ -350,10 +350,145 @@ def test_the_channel_post_carries_no_buttons(fake):
     assert not any(b["type"] == "actions" for b in posted.kwargs["blocks"])
 
 
-def test_a_bare_challenge_command_explains_itself(fake):
-    respond = MagicMock()
-    bot.handle_challenge(command("challenge"), respond, MagicMock())
-    assert "best of 5" in said(respond)
+def test_a_bare_challenge_command_opens_the_form(fake):
+    client = MagicMock()
+    bot.handle_challenge(command("challenge"), MagicMock(), client)
+    view = client.views_open.call_args.kwargs["view"]
+    assert view["callback_id"] == bot.CHALLENGE_MODAL
+
+
+def test_the_form_falls_back_to_the_typed_route_if_it_cannot_open(fake):
+    client, respond = MagicMock(), MagicMock()
+    client.views_open.side_effect = RuntimeError("no trigger")
+    bot.handle_challenge(command("challenge"), respond, client)
+    assert "type it instead" in said(respond)
+
+
+# --- the form --------------------------------------------------------------
+
+def test_the_form_offers_every_length_and_starts_on_the_default(fake):
+    view = bot.build_challenge_modal(A, "C1")
+    block = next(b for b in view["blocks"] if b["block_id"] == "length")
+    values = [o["value"] for o in block["element"]["options"]]
+    assert values == [k for k, _, _ in challenge.LENGTH_CHOICES]
+    assert block["element"]["initial_option"]["value"] == challenge.DEFAULT_CHOICE
+
+
+def test_every_option_is_labelled_the_way_the_challenge_will_read(fake):
+    """So the menu can't promise "Best of 5" and post something else."""
+    view = bot.build_challenge_modal(A, "C1")
+    block = next(b for b in view["blocks"] if b["block_id"] == "length")
+    for option in block["element"]["options"]:
+        games, first_to = challenge.length_of(option["value"])
+        assert option["text"]["text"] == challenge.length_note(
+            {"games": games, "first_to": first_to})
+
+
+def test_the_start_time_is_optional_on_the_form(fake):
+    """Unlike the schedule form. "Play me some time today" is a real thing to
+    say, and a required picker would turn it into a commitment nobody made."""
+    view = bot.build_challenge_modal(A, "C1")
+    when = next(b for b in view["blocks"] if b["block_id"] == "when")
+    assert when["optional"] is True
+    assert "initial_date_time" not in when["element"]
+
+
+def test_the_form_preselects_you(fake):
+    view = bot.build_challenge_modal(A, "C1")
+    side_a = next(b for b in view["blocks"] if b["block_id"] == "side_a")
+    assert side_a["element"]["initial_users"] == [A]
+
+
+def test_the_form_asks_for_a_channel_only_from_the_shortcuts_menu(fake):
+    assert not any(b.get("block_id") == "channel"
+                   for b in bot.build_challenge_modal(A, "C1")["blocks"])
+    assert any(b.get("block_id") == "channel"
+               for b in bot.build_challenge_modal(A, pick_channel=True)["blocks"])
+
+
+def _submit(side_a=(A,), side_b=(B,), length="bo5", epoch=None, channel="C1"):
+    state = {
+        "side_a": {"v": {"selected_users": list(side_a)}},
+        "side_b": {"v": {"selected_users": list(side_b)}},
+        "length": {"v": {"selected_option": {"value": length}}},
+        "when": {"v": {"selected_date_time": epoch}},
+    }
+    return {"state": {"values": state}, "private_metadata": channel}
+
+
+def test_submitting_the_form_puts_a_challenge_up(fake):
+    ack, client = MagicMock(), MagicMock()
+    client.chat_postMessage.return_value = {"ts": "1", "channel": "C1"}
+    bot.handle_challenge_modal(ack, {"user": {"id": A}}, _submit(), client)
+    ack.assert_called_with()
+    live = challenge.live()
+    assert len(live) == 1
+    assert (live[0]["games"], live[0]["first_to"]) == (5, 3)
+
+
+def test_the_form_and_the_typed_route_produce_the_same_thing(fake):
+    """One creator behind both, so neither can drift."""
+    client = MagicMock()
+    client.chat_postMessage.return_value = {"ts": "1", "channel": "C1"}
+    bot.handle_challenge_modal(MagicMock(), {"user": {"id": A}}, _submit(), client)
+    from_form = challenge.live()[0]
+
+    for cid in [r["id"] for r in challenge.live()]:
+        challenge.claim(cid)
+    bot.handle_challenge(command(f"challenge {m(B)} best of 5"),
+                         MagicMock(), client)
+    typed = [r for r in challenge.live()][0]
+    for field in ("side_a", "side_b", "games", "first_to", "from"):
+        assert from_form[field] == typed[field], field
+
+
+def test_a_form_with_someone_on_both_sides_comes_back_as_a_field_error(fake):
+    ack = MagicMock()
+    bot.handle_challenge_modal(ack, {"user": {"id": A}},
+                               _submit(side_a=[A], side_b=[A]))
+    assert ack.call_args.kwargs["response_action"] == "errors"
+    assert "side_b" in ack.call_args.kwargs["errors"]
+    assert challenge.live() == []
+
+
+def test_a_form_start_time_in_the_past_is_a_field_error(fake):
+    ack = MagicMock()
+    past = int((store.now_ist() - timedelta(hours=1)).timestamp())
+    bot.handle_challenge_modal(ack, {"user": {"id": A}}, _submit(epoch=past))
+    assert "when" in ack.call_args.kwargs["errors"]
+
+
+def test_the_form_refuses_a_second_challenge_between_the_same_pair(fake):
+    issue(side_a=[A], side_b=[B])
+    ack = MagicMock()
+    bot.handle_challenge_modal(ack, {"user": {"id": A}}, _submit())
+    assert "already an open challenge" in ack.call_args.kwargs["errors"]["side_b"]
+
+
+def test_a_stale_form_value_falls_back_rather_than_losing_the_challenge(fake):
+    """A menu key we don't recognise came from a form opened before a deploy."""
+    client = MagicMock()
+    client.chat_postMessage.return_value = {"ts": "1", "channel": "C1"}
+    bot.handle_challenge_modal(MagicMock(), {"user": {"id": A}},
+                               _submit(length="nonsense"), client)
+    assert challenge.live()[0]["games"] == challenge.DEFAULT_GAMES
+
+
+def test_the_shortcut_opens_the_form_with_a_channel_picker(fake):
+    client = MagicMock()
+    bot.handle_challenge_shortcut(MagicMock(), {"user": {"id": A},
+                                                "trigger_id": "t"}, client)
+    view = client.views_open.call_args.kwargs["view"]
+    assert view["callback_id"] == bot.CHALLENGE_MODAL
+    assert any(b.get("block_id") == "channel" for b in view["blocks"])
+
+
+def test_a_challenge_that_cannot_be_posted_is_not_left_open(fake):
+    """Nowhere to see it means nobody can answer it."""
+    client, respond = MagicMock(), MagicMock()
+    client.chat_postMessage.side_effect = RuntimeError("channel_not_found")
+    bot.handle_challenge(command(f"challenge {m(B)}"), respond, client)
+    assert challenge.live() == []
 
 
 def test_a_second_challenge_between_the_same_pair_is_refused(fake):

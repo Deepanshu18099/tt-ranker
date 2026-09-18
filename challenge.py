@@ -44,6 +44,36 @@ TTL_SECONDS = 7 * 24 * 3600
 # way past someone's desk.
 DEFAULT_GAMES = 3
 
+# What the form offers, and the only place the wording and the numbers live
+# together — the menu label is generated from the same row the rules come from,
+# so a "Best of 5" that quietly meant four games is not expressible.
+LENGTH_CHOICES = (
+    ("bo3", 3, 2),
+    ("bo5", 5, 3),
+    ("bo7", 7, 4),
+    ("g1", 1, None),
+    ("g3", 3, None),
+    ("g5", 5, None),
+)
+DEFAULT_CHOICE = "bo3"
+
+
+def choice_label(key):
+    """How one option reads in the menu — the same phrasing the challenge, the
+    DM and the fixture all use, so the form never promises different words."""
+    games, first_to = length_of(key)
+    return length_note({"games": games, "first_to": first_to})
+
+
+def length_of(key):
+    """(games, first_to) for a menu key, falling back to the default rather than
+    raising: a value we don't recognise came from a stale open form, and losing
+    somebody's challenge over it would be worse than a best-of-three."""
+    for choice, games, first_to in LENGTH_CHOICES:
+        if choice == key:
+            return games, first_to
+    return DEFAULT_GAMES, DEFAULT_GAMES // 2 + 1
+
 
 def chal_key(cid):
     return f"tt:chal:{cid}"

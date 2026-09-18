@@ -60,7 +60,8 @@ Everything is one slash command, `/tt`.
 | **`/tt schedule`** · shortcuts menu → *Schedule a table tennis match* | **Opens a form — pick the players and a start time** |
 | `/tt schedule @bob 6pm` | Or type it — `in 30m`, `6pm`, `6:30pm` and `18:30` all work |
 | `/tt reschedule 6 7pm` | Move a fixture — **Move it** on the message does the same |
-| `/tt challenge @bob best of 5` | Call someone out, with a length. `bo7`, `first to 3`, `5 games`, `at 6pm` |
+| **`/tt challenge`** · shortcuts menu → *Challenge someone to table tennis* | **Opens a form — pick who, pick how long** |
+| `/tt challenge @bob best of 5` | Or type it. `bo7`, `first to 3`, `5 games`, `at 6pm` |
 | `/tt accept 4` · `/tt decline 4` | Answer a challenge — the DM buttons do the same |
 | `/tt challenges` | Every challenge still waiting on an answer |
 | `/tt book` · `/tt book 6` | Open fixtures · one in full, with every stake |
@@ -1024,11 +1025,43 @@ in both ledgers — `/tt wallet` can always answer *where did that come from*.
 `/tt schedule` states a fact — it's happening, back it if you like. A challenge
 is the step before that, where the other person still gets a say:
 
+Two ways in, same challenge: **`/tt challenge`** on its own opens a form, or the
+**shortcuts menu** → *Challenge someone to table tennis*. Or type it:
+
 ```
 /tt challenge @bob best of 5          # bo7, first to 3, 5 games, 4 matches
 /tt challenge @bob 5 games at 6pm     # a time, if you want one
 /tt challenge @partner vs @dan @eve   # doubles, same vs rule as logging
 ```
+
+```
+┌─ Challenge someone ───────────────────────┐
+│  Your side        [ @you            ▾ ]   │
+│  Add a partner for doubles.               │
+│                                           │
+│  Who you're calling out                   │
+│                   [ @bob            ▾ ]   │
+│                                           │
+│  How long    [ Best of 5 — first to 3 ▾ ] │
+│  Agreed up front, so it isn't an          │
+│  argument afterwards.                     │
+│                                           │
+│  Start time (optional)   [           ▾ ]  │
+│  Leave it out and it starts shortly        │
+│  after they accept.                       │
+│                                           │
+│               [ Cancel ]  [ Call them out ]│
+└───────────────────────────────────────────┘
+```
+
+The length is a **menu** rather than a text box — it's the one field with a
+small, known set of right answers, and picking from them means nobody has to
+learn that `bo5` is a thing the bot understands. Every option is labelled with
+the same phrase the challenge, the DM and the fixture all use, so the menu can't
+promise *Best of 5* and post something else.
+
+The start time is **genuinely optional here**, unlike the schedule form: a
+required picker would turn every challenge into a commitment nobody made.
 
 **The length is the other half of the invitation.** "Play me" and "play me, best
 of five" are different questions, and the second is the one people argue about

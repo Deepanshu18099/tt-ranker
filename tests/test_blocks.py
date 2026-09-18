@@ -290,3 +290,20 @@ def test_the_three_challenge_buttons_do_not_share_an_action_id(fake):
 def test_a_challenge_with_a_time_on_it_is_valid(fake):
     record = _challenge(when=store.now_ist() + timedelta(hours=3))
     check_blocks(bot.challenge_blocks(record), "challenge_blocks(timed)")
+
+
+@pytest.mark.parametrize("pick_channel", [False, True])
+def test_the_challenge_form_is_a_valid_view(fake, pick_channel):
+    check_view(bot.build_challenge_modal(A, "C1", pick_channel=pick_channel),
+               f"build_challenge_modal(pick_channel={pick_channel})")
+
+
+def test_every_challenge_length_option_fits_slacks_limits(fake):
+    view = bot.build_challenge_modal(A, "C1")
+    block = next(b for b in view["blocks"] if b["block_id"] == "length")
+    options = block["element"]["options"]
+    assert 0 < len(options) <= 100
+    for option in options:
+        assert option["text"]["type"] == "plain_text"
+        assert 0 < len(option["text"]["text"]) <= 75
+        assert 0 < len(option["value"]) <= 150

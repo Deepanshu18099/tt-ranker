@@ -1577,8 +1577,9 @@ results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 • `/tt titles` — who holds what
 • `/tt reschedule 6 7pm` — running late? move a fixture and keep every stake \
 _(or press *Move it* on it)_
-• `/tt challenge @bob best of 5` — call someone out. Also `bo7`, `first to 3`, \
-`5 games`, and `at 6pm` if you want a time. They accept, it goes up as a fixture.
+• `/tt challenge` — opens a form. Or type it: `/tt challenge @bob best of 5` \
+— also `bo7`, `first to 3`, `5 games`, and `at 6pm` if you want a time. \
+They accept, it goes up as a fixture.
 • `/tt accept 4` · `/tt decline 4` · `/tt challenges` — answer one, or see what's open
 • `/tt edit 33 21-19 …` — correct a logged match _(admins; `swap` if the sides \
 went in backwards, `void` to throw it out)_
@@ -1739,6 +1740,8 @@ def build_app(process_before_response=False, token_verification=True):
     for action in (ACCEPT_ACTION, DECLINE_ACTION, WITHDRAW_ACTION):
         app.action(action)(_wrap_action(handle_challenge_button))
     app.view(RESCHEDULE_MODAL)(handle_reschedule_modal)
+    app.shortcut(CHALLENGE_SHORTCUT)(handle_challenge_shortcut)
+    app.view(CHALLENGE_MODAL)(handle_challenge_modal)
     app.view(BET_MODAL)(handle_bet_modal)
     app.event("member_joined_channel")(handle_member_joined)
     return app
@@ -1777,6 +1780,8 @@ RESCHEDULE_MODAL = "tt_reschedule_modal"
 ACCEPT_ACTION = "tt_chal_accept"
 DECLINE_ACTION = "tt_chal_decline"
 WITHDRAW_ACTION = "tt_chal_withdraw"
+CHALLENGE_MODAL = "tt_challenge_modal"
+CHALLENGE_SHORTCUT = "tt_challenge_shortcut"
 
 
 def fmt_spins(n):
@@ -2268,15 +2273,123 @@ def challenge_audience(record):
     return who
 
 
+def build_challenge_modal(caller="", channel_id="", pick_channel=False):
+    """The form behind a bare `/tt challenge`.
+
+    The length is a menu rather than a text box: it is the one field with a
+    small, known set of right answers, and picking from them means nobody has to
+    learn that `bo5` is a thing the bot understands.
+
+    The time is genuinely optional here, unlike the schedule form. "Play me some
+    time today" is a real invitation, and a form that insisted on a start time
+    would turn every challenge into a commitment nobody made.
+    """
+    options = [{"text": {"type": "plain_text", "text": challenge.choice_label(key)},
+                "value": key} for key, _, _ in challenge.LENGTH_CHOICES]
+    initial = next(o for o in options if o["value"] == challenge.DEFAULT_CHOICE)
+    blocks = [
+        _users_block("side_a", "Your side", initial=[caller] if caller else None,
+                     hint="Add a partner for doubles."),
+        _users_block("side_b", "Who you're calling out"),
+        {"type": "input", "block_id": "length",
+         "label": {"type": "plain_text", "text": "How long"},
+         "hint": {"type": "plain_text",
+                  "text": "Agreed up front, so it isn't an argument afterwards."},
+         "element": {"type": "static_select", "action_id": "v",
+                     "options": options, "initial_option": initial}},
+        {"type": "input", "block_id": "when", "optional": True,
+         "label": {"type": "plain_text", "text": "Start time (optional)"},
+         "hint": {"type": "plain_text",
+                  "text": "Leave it out and it starts shortly after they accept."},
+         "element": {"type": "datetimepicker", "action_id": "v"}},
+    ]
+    if pick_channel:
+        blocks.append(_channel_block("Put the challenge in",
+                                     "Where they'll see it, and where the "
+                                     "fixture goes if they accept."))
+    return {
+        "type": "modal",
+        "callback_id": CHALLENGE_MODAL,
+        "private_metadata": channel_id or "",
+        "title": {"type": "plain_text", "text": "Challenge someone"},
+        "submit": {"type": "plain_text", "text": "Call them out"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": blocks,
+    }
+
+
+def handle_challenge_shortcut(ack, shortcut, client=None, logger=None):
+    """The shortcuts-menu entry. No channel context, so the form asks."""
+    ack()
+    user = shortcut["user"]["id"]
+    try:
+        client.views_open(trigger_id=shortcut["trigger_id"],
+                          view=build_challenge_modal(user, pick_channel=True))
+    except Exception as e:
+        (logger or log).warning("challenge shortcut failed: %s", e)
+        _dm(client, user, ":warning: Couldn't open the form. Call someone out "
+                          "with `/tt challenge @bob best of 5` instead.",
+            logger=logger)
+
+
+def handle_challenge_modal(ack, body, view, client=None, context=None, logger=None):
+    """Validate in place, then hand off to the same path as the typed command."""
+    state = view["state"]["values"]
+    side_a = _modal_value(state, "side_a", "selected_users") or []
+    side_b = _modal_value(state, "side_b", "selected_users") or []
+    choice = _modal_value(state, "length", "selected_option") or {}
+    epoch = _modal_value(state, "when", "selected_date_time")
+    channel = (_modal_value(state, "channel", "selected_conversation")
+               or view.get("private_metadata") or "")
+    now = store.now_ist()
+
+    errors, when = {}, None
+    try:
+        parsing.validate_sides(side_a, side_b)
+    except parsing.ParseError as e:
+        errors["side_b"] = str(e)
+    if set(side_a) & set(side_b):
+        errors["side_b"] = "Somebody is on both sides."
+    if epoch:
+        when = datetime.fromtimestamp(int(epoch), tz=store.IST)
+        if when <= now:
+            errors["when"] = "That's already past — leave it blank or pick a later time."
+        elif when - now > timedelta(days=parsing.MAX_LEAD_DAYS):
+            errors["when"] = (f"More than {parsing.MAX_LEAD_DAYS} days out. "
+                              "Challenge them nearer the time.")
+    if not channel and "channel" in state:
+        errors["channel"] = "Pick where to put it."
+    if not errors and challenge.open_between(side_a, side_b):
+        errors["side_b"] = "There's already an open challenge between you two."
+    if errors:
+        ack(response_action="errors", errors=errors)
+        return
+
+    ack()
+    caller = body["user"]["id"]
+    games, first_to = challenge.length_of(choice.get("value"))
+    error = open_challenge(side_a, side_b, games, first_to, when, caller,
+                           channel or caller, client, now, logger,
+                           bot_id=(context or {}).get("bot_user_id"))
+    if error:
+        _dm(client, caller, error, logger=logger)
+
+
 def handle_challenge(command, respond, client=None, bot_id=None, logger=None):
-    """`/tt challenge @bob best of 5` — an invitation with a length on it."""
+    """`/tt challenge @bob best of 5` — an invitation with a length on it.
+    Bare, it opens the form."""
     caller = command["user_id"]
     _, rest = parsing.split_subcommand(command.get("text", ""))
     now = store.now_ist()
     if not rest.strip():
-        respond(":crossed_swords: Challenge who? `/tt challenge @bob best of 5`"
-                " — also `bo7`, `first to 3`, `5 games`, and a time if you want "
-                "one (`at 6pm`).")
+        try:
+            client.views_open(
+                trigger_id=command["trigger_id"],
+                view=build_challenge_modal(caller, command.get("channel_id", "")))
+        except Exception as e:
+            (logger or log).warning("challenge modal failed: %s", e)
+            respond(":warning: Couldn't open the form — type it instead: "
+                    "`/tt challenge @bob best of 5`")
         return
     try:
         side_a, side_b, games, first_to, when = parsing.parse_challenge(
@@ -2292,22 +2405,37 @@ def handle_challenge(command, respond, client=None, bot_id=None, logger=None):
                 f"you two — `#{standing['id']}`, {challenge.length_note(standing)}. "
                 "Answer that one first.")
         return
+    error = open_challenge(side_a, side_b, games, first_to, when, caller,
+                           command.get("channel_id", ""), client, now, logger,
+                           bot_id=bot_id)
+    if error:
+        respond(error)
 
+
+def open_challenge(side_a, side_b, games, first_to, when, caller, channel,
+                   client, now=None, logger=None, bot_id=None):
+    """Create a challenge, post it, and DM the buttons. Returns None, or a
+    message for the caller.
+
+    Shared by the typed command, the form and the shortcut, so none of them can
+    drift on what happens once a valid challenge is entered.
+    """
+    now = now or store.now_ist()
     store.ensure_players(side_a + side_b, now)
     record = challenge.issue(side_a, side_b, games, by=caller, first_to=first_to,
-                             starts_at=when, channel=command.get("channel_id", ""),
-                             now=now)
+                             starts_at=when, channel=channel, now=now)
     try:
         resp = client.chat_postMessage(
-            channel=command["channel_id"], blocks=challenge_blocks(record, now),
+            channel=channel, blocks=challenge_blocks(record, now),
             text=f"{plain_side(side_a)} challenges {plain_side(side_b)}.")
         record["ts"], record["channel"] = resp["ts"], resp["channel"]
         challenge.save(record)
     except Exception as e:
+        # Nowhere to see it means nobody can answer it, so don't leave one open.
         challenge.claim(record["id"])
+        challenge.withdraw(record, caller, now)
         (logger or log).warning("could not post challenge: %s", e)
-        respond(post_failure(e, command.get("channel_id", ""), bot_id))
-        return
+        return post_failure(e, channel, bot_id)
 
     delivered = 0
     for uid, role in challenge_audience(record).items():
@@ -2319,8 +2447,9 @@ def handle_challenge(command, respond, client=None, bot_id=None, logger=None):
         except Exception as e:
             (logger or log).warning("challenge DM to %s failed: %s", uid, e)
     if not delivered:
-        respond(":warning: Posted it, but I couldn't DM anyone the buttons — "
+        return (":warning: Posted it, but I couldn't DM anyone the buttons — "
                 f"they can answer with `/tt accept {record['id']}`.")
+    return None
 
 
 def _close_challenge(record, client, now=None, logger=None):

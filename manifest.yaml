@@ -18,6 +18,10 @@ features:
       type: global
       callback_id: tt_schedule_shortcut
       description: Put a fixture up for the channel to bet on
+    - name: Challenge someone to table tennis
+      type: global
+      callback_id: tt_challenge_shortcut
+      description: Call someone out, and agree how long the session runs
   slash_commands:
     - command: /tt
       url: https://tt-ranker.vercel.app/slack/events
