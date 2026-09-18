@@ -191,7 +191,7 @@ def test_the_page_has_a_doubles_tab(fake):
     import page
     html = page.render({}, {}, [], {}, {}, 4, view="doubles")
     assert 'href="?view=doubles"' in html
-    assert '<a class="on" href="?view=doubles">Doubles</a>' in html
+    assert '<a class="on" aria-current="page" href="?view=doubles"' in html
 
 
 def test_the_doubles_tab_states_the_caveat(fake):
@@ -201,25 +201,41 @@ def test_the_doubles_tab_states_the_caveat(fake):
     assert "Singles is the tab that can" in html
 
 
-def test_the_doubles_tab_shows_no_weekly_movement(fake):
-    """The weekly figures count every game, so they would be a lie beside a
-    doubles-only rating."""
+def test_the_doubles_tab_never_borrows_the_overall_figure(fake):
+    """The weekly counters count every game, so they would be a lie beside a
+    doubles-only rating. With no doubles matches to sum, the tab says nothing."""
     import page
     players = {A: dict(store.new_player(), rating=1200, matches=9,
                        games_won=9, wins=3)}
     html = page.render(players, {A: "Ada"}, [], {A: 40}, {A: 9}, 1, view="doubles")
     assert "Ada" in html and "this week" not in html
     # Overall does show it, so the absence above means something.
-    assert "40 this week" in page.render(players, {A: "Ada"}, [], {A: 40},
-                                         {A: 9}, 1, view="overall")
+    assert "+40" in page.render(players, {A: "Ada"}, [], {A: 40}, {A: 9}, 1,
+                                view="overall")
 
 
-def test_the_doubles_tab_shows_no_spins_table(fake):
+def test_the_doubles_tab_moves_on_doubles_matches(fake):
+    """Given doubles matches, movement is summed from the doubles Elo in them."""
     import page
-    html = page.render({}, {}, [], {}, {}, 4, view="doubles",
-                       spins=[(A, 6000, 1000)], start_spins=5000, circulating=5000)
-    assert "Play money" not in html
-    # ...and the same call on Overall does show it, so the check isn't vacuous.
-    assert "Play money" in page.render({}, {}, [], {}, {}, 4, view="overall",
+    players = {A: dict(store.new_player(), rating=1200, matches=9,
+                       games_won=9, wins=3)}
+    history = [{"side_a": [A, "U0X"], "side_b": ["U0Y", "U0Z"], "games_a": 2,
+                "games_b": 1, "doubles": True, "week": "tt:wk:2026-W38",
+                "deltas": {A: 40}, "split_rated": {"deltas": {A: 12}}}]
+    html = page.render(players, {A: "Ada"}, [], {A: 40}, {A: 9}, 1, view="doubles",
+                       history=history, week="tt:wk:2026-W38")
+    assert "+12" in html and "+40" not in html
+
+
+def test_no_format_tab_carries_the_spins_table(fake):
+    """Spins are won on fixtures, not on a ladder, so they belong to no format
+    — they have a board of their own instead."""
+    import page
+    for view in ("", "doubles", "overall"):
+        html = page.render({}, {}, [], {}, {}, 4, view=view,
+                           spins=[(A, 6000, 1000)], start_spins=5000, circulating=5000)
+        assert "Play money" not in html
+    # ...and the spins board does show it, so the check isn't vacuous.
+    assert "Play money" in page.render({}, {}, [], {}, {}, 4, board="spins",
                                        spins=[(A, 6000, 1000)], start_spins=5000,
                                        circulating=5000)

@@ -143,6 +143,9 @@ def test_a_quiet_week_still_pays_the_stipend(fake, monkeypatch):
     weekly post's early returns, so a week with no matches paid nobody — the
     exact week people need spins to start playing again."""
     import betting
+    # Pinned, not inherited: without this the test reads TT_CHANNEL from
+    # whatever .env the machine happens to have, and fails on one that has none.
+    monkeypatch.setattr(standings, "CHANNEL", "C9")
     monkeypatch.setattr(betting, "WEEKLY_STIPEND", 1000)
     store.ensure_players([A, B])
     now = at(2026, 9, 14)
