@@ -60,6 +60,9 @@ Everything is one slash command, `/tt`.
 | **`/tt schedule`** · shortcuts menu → *Schedule a table tennis match* | **Opens a form — pick the players and a start time** |
 | `/tt schedule @bob 6pm` | Or type it — `in 30m`, `6pm`, `6:30pm` and `18:30` all work |
 | `/tt reschedule 6 7pm` | Move a fixture — **Move it** on the message does the same |
+| `/tt challenge @bob best of 5` | Call someone out, with a length. `bo7`, `first to 3`, `5 games`, `at 6pm` |
+| `/tt accept 4` · `/tt decline 4` | Answer a challenge — the DM buttons do the same |
+| `/tt challenges` | Every challenge still waiting on an answer |
 | `/tt book` · `/tt book 6` | Open fixtures · one in full, with every stake |
 | `/tt wallet` | Your spins and recent moves |
 | `/tt transfer @bob 500` | Admins only — move spins between wallets |
@@ -1015,6 +1018,53 @@ handing out a prize is giving away their own spins, not printing new ones.
 
 Everyone whose balance moved is DM'd, and a move made by a third party says so
 in both ledgers — `/tt wallet` can always answer *where did that come from*.
+
+### Challenging someone
+
+`/tt schedule` states a fact — it's happening, back it if you like. A challenge
+is the step before that, where the other person still gets a say:
+
+```
+/tt challenge @bob best of 5          # bo7, first to 3, 5 games, 4 matches
+/tt challenge @bob 5 games at 6pm     # a time, if you want one
+/tt challenge @partner vs @dan @eve   # doubles, same vs rule as logging
+```
+
+**The length is the other half of the invitation.** "Play me" and "play me, best
+of five" are different questions, and the second is the one people argue about
+afterwards — so it's agreed up front and both sides see it before anyone walks
+to the table. `best of 5` means first to 3; `first to 3` means up to 5 games;
+`5 games` means five games with nobody stopping early. Left out, it's a
+best-of-three, which is about twenty minutes.
+
+**Both ratings are on it**, along with who that makes the favourite — the same
+expectation `/tt odds` reports, said at the moment people care about it most:
+
+```
+⚔️ @harsh 1177
+   challenges
+   @danger 958
+   Best of 5 — first to 3
+   @harsh favoured — 78% on the ratings.
+```
+
+**The buttons go by DM, not to the channel** — the same rule as confirming a
+result. The channel sees the callout and who owes an answer; **Accept** and
+**Not today** go to the people being challenged, and the challenger gets **Take
+it back**. A challenge nobody answers expires after 24 hours, and only one can
+stand between the same two sides at a time, so a pair can't stack up five
+identical invitations.
+
+**Accepting puts up an ordinary fixture** — so betting, moving it and calling it
+off are all the machinery that already exists, and a challenge never becomes a
+second kind of scheduled match to keep in step. If a time was agreed it's kept;
+if it went by while the challenge sat unanswered, the fixture starts shortly
+after the yes rather than opening already due.
+
+The agreed length is **a statement of intent, not a constraint**. It rides along
+onto the fixture, but `/tt log` still takes whatever was really played — a
+best-of-five that stopped at 2-0 is logged as two games. Enforcing it would mean
+rejecting true results to protect a plan, which is the wrong way round.
 
 ### Running late
 

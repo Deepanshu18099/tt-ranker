@@ -51,10 +51,14 @@ SUBCOMMANDS = {
     "who": "who", "whois": "who", "lookup": "who", "find": "who",
     "nudge": "nudge", "askall": "nudge",
     "schedule": "schedule", "sched": "schedule", "fixture": "schedule",
-    "challenge": "schedule",
+    "challenge": "challenge", "chal": "challenge", "callout": "challenge",
+    "vs": "challenge",
     "reschedule": "reschedule", "move": "reschedule", "postpone": "reschedule",
     "delay": "reschedule", "resched": "reschedule",
     "bet": "bet", "stake": "bet", "back": "bet",
+    "accept": "accept", "yes": "accept", "on": "accept",
+    "decline": "decline", "nope": "decline", "no": "decline",
+    "challenges": "challenges", "callouts": "challenges",
     "wallet": "wallet", "balance": "wallet", "spins": "wallet", "purse": "wallet",
     "rich": "rich", "richest": "rich", "wallets": "rich", "moneyboard": "rich",
     "titles": "titles", "title": "titles", "badges": "titles", "awards": "titles",
@@ -498,3 +502,78 @@ def parse_reschedule(text, now=None):
         raise ParseError(f"That's more than {MAX_LEAD_DAYS} days out — "
                          "move it nearer the time.")
     return found.group(1), when
+
+
+# --- challenging someone ---------------------------------------------------
+
+# "matches" is what people here call games — the bot's own word is "games", but
+# a parser that only accepts its own vocabulary is a parser people fight with.
+GAME_WORDS = r"(?:games?|matches|match|sets?)"
+BEST_OF_RE = re.compile(r"\bbe?st?[\s-]*of[\s-]*(\d{1,2})\b|\bbo[\s-]?(\d{1,2})\b", re.I)
+FIRST_TO_RE = re.compile(r"\bfirst[\s-]*to[\s-]*(\d{1,2})\b|\bft[\s-]?(\d{1,2})\b", re.I)
+COUNT_RE = re.compile(rf"\b(\d{{1,2}})\s*{GAME_WORDS}\b", re.I)
+
+
+def parse_length(text):
+    """How long a session runs → (games, first_to, matched text).
+
+    Three ways to say it, because people do:
+
+      best of 5 / bo5   → up to 5 games, first to 3
+      first to 3 / ft3  → first to 3, so up to 5 games
+      5 games / 5 matches → 5 games, nobody stops early
+
+    (None, None, "") when the text doesn't say. The caller supplies the default,
+    because "no length given" is a different fact from "they asked for three".
+    """
+    found = BEST_OF_RE.search(text or "")
+    if found:
+        games = int(found.group(1) or found.group(2))
+        return games, games // 2 + 1, found.group(0)
+    found = FIRST_TO_RE.search(text or "")
+    if found:
+        first_to = int(found.group(1) or found.group(2))
+        return first_to * 2 - 1, first_to, found.group(0)
+    found = COUNT_RE.search(text or "")
+    if found:
+        return int(found.group(1)), None, found.group(0)
+    return None, None, ""
+
+
+def parse_challenge(text, caller=None, bot_id=None, now=None, default_games=3):
+    """`@bob best of 5 at 6pm` → (side_a, side_b, games, first_to, when|None).
+
+    The time is optional here in a way it isn't for `/tt schedule`: a challenge
+    is an invitation, and "play me some time today" is a real thing to say. Left
+    out, it is None and the fixture takes its start from whenever it's accepted.
+    """
+    import elo
+    games, first_to, length_text = parse_length(text)
+    rest = text.replace(length_text, " ") if length_text else text
+
+    when, when_text = parse_when(rest, now)
+    if when_text:
+        rest = rest.replace(when_text, " ")
+    # `at` is only ever glue between the two, and would read as a name otherwise.
+    rest = re.sub(r"(?i)\bat\b", " ", rest)
+
+    side_a, side_b = _sides(_tokenize(rest, exclude=bot_id), caller)
+    validate_sides(side_a, side_b)
+    if caller and caller in side_b:
+        raise ParseError("You can't challenge yourself.")
+
+    if games is None:
+        games, first_to = default_games, default_games // 2 + 1
+    if games < 1:
+        raise ParseError("A session is at least one game.")
+    if games > elo.MAX_GAMES:
+        raise ParseError(f"{games} games is more than the {elo.MAX_GAMES} a "
+                         "session can hold. Try `best of 5`.")
+
+    if when is not None:
+        if when <= now:
+            raise ParseError("That's already past. Try `in 30m`, `6pm`, or `18:30`.")
+        if when - now > timedelta(days=MAX_LEAD_DAYS):
+            raise ParseError(f"That's more than {MAX_LEAD_DAYS} days out — "
+                             "challenge them nearer the time.")
+    return side_a, side_b, games, first_to, when

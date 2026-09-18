@@ -501,6 +501,7 @@ def route(subpath):
         return _run_cron(lambda s, client, dry: {
             **s.sweep_pending(client, dry_run=dry),
             "fixtures": s.sweep_fixtures(client, dry_run=dry),
+            "challenges": s.sweep_challenges(client, dry_run=dry),
             "stipend": s.pay_due_stipend(dry_run=dry)})
 
     if tail.endswith("/debug"):

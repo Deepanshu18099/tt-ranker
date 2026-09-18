@@ -251,3 +251,42 @@ def test_a_moved_fixture_message_is_valid_at_every_stage(fake):
     betting.close_if_due(record, now + timedelta(hours=5))
     check_blocks(bot.fixture_blocks(record, now + timedelta(hours=5)),
                  "fixture_blocks(moved, closed)")
+
+
+# --- challenges ------------------------------------------------------------
+
+def _challenge(side_a=(A,), side_b=(B,), games=5, first_to=3, when=None):
+    import challenge
+    return challenge.issue(list(side_a), list(side_b), games, by=side_a[0],
+                           first_to=first_to, starts_at=when, channel="C1")
+
+
+@pytest.mark.parametrize("side_a,side_b", [((A,), (B,)), ((A, B), (C, D))])
+def test_a_challenge_post_and_every_dm_are_valid(fake, side_a, side_b):
+    record = _challenge(side_a, side_b)
+    check_blocks(bot.challenge_blocks(record), "challenge_blocks")
+    for uid, role in bot.challenge_audience(record).items():
+        check_blocks(bot.challenge_dm_blocks(record, role),
+                     f"challenge_dm_blocks[{role}]")
+
+
+@pytest.mark.parametrize("state", ["accepted", "declined", "withdrawn", "expired"])
+def test_a_settled_challenge_message_is_valid(fake, state):
+    record = _challenge()
+    record.update(state=state, answered_by=B, fixture="7")
+    check_blocks(bot.challenge_blocks(record), f"challenge_blocks({state})")
+
+
+def test_the_three_challenge_buttons_do_not_share_an_action_id(fake):
+    """All three sit in one actions block on the challenged side's DM."""
+    record = _challenge()
+    for role in ("answer", "withdraw"):
+        blocks = bot.challenge_dm_blocks(record, role)
+        ids = [el["action_id"] for b in blocks if b["type"] == "actions"
+               for el in b["elements"]]
+        assert len(ids) == len(set(ids)), f"{role}: {ids}"
+
+
+def test_a_challenge_with_a_time_on_it_is_valid(fake):
+    record = _challenge(when=store.now_ist() + timedelta(hours=3))
+    check_blocks(bot.challenge_blocks(record), "challenge_blocks(timed)")

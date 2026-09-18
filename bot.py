@@ -35,6 +35,7 @@ import awards
 import betting
 import elo
 import kv
+import challenge
 import parsing
 import rerate
 import store
@@ -74,6 +75,36 @@ NO_KV = (":warning: No database is configured, so I can't track ratings. "
 
 def fmt_side(uids):
     return " & ".join(f"<@{u}>" for u in uids)
+
+
+def fmt_side_rated(uids, players):
+    """`@bob (1042)` — the names with what each of them is actually rated.
+
+    A challenge is a claim about who is better, so the numbers being claimed
+    about belong on it. Anyone with no record yet reads as the opening rating
+    rather than being left blank: that *is* what they are rated.
+    """
+    parts = []
+    for uid in uids:
+        rating = (players.get(uid) or {}).get("rating", elo.START_RATING)
+        parts.append(f"<@{uid}> `{rating}`")
+    return " & ".join(parts)
+
+
+def favourite_line(side_a, side_b, players):
+    """One line on who the maths favours, from the ratings alone.
+
+    The same expectation `/tt odds` reports, said at the moment people care
+    about it most — when someone has just been called out.
+    """
+    entries = lambda side: [{"uid": u, "rating": (players.get(u) or {}).get(
+        "rating", elo.START_RATING)} for u in side]
+    a, b = elo.team_rating(entries(side_a)), elo.team_rating(entries(side_b))
+    chance = elo.expected(a, b)
+    if abs(a - b) < 15:
+        return "Too close to call."
+    favoured, pct = (side_a, chance) if chance > 0.5 else (side_b, 1 - chance)
+    return f"{fmt_side(favoured)} favoured — {round(pct * 100)}% on the ratings."
 
 
 def fmt_games(games):
@@ -636,6 +667,10 @@ def _note_if_ephemeral(body, respond, text):
 
 def _action_value(body):
     return (body.get("actions") or [{}])[0].get("value", "")
+
+
+def _action_id(body):
+    return (body.get("actions") or [{}])[0].get("action_id", "")
 
 
 def _settle_everywhere(client, record, blocks, fallback, body=None, respond=None,
@@ -1542,6 +1577,9 @@ results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 • `/tt titles` — who holds what
 • `/tt reschedule 6 7pm` — running late? move a fixture and keep every stake \
 _(or press *Move it* on it)_
+• `/tt challenge @bob best of 5` — call someone out. Also `bo7`, `first to 3`, \
+`5 games`, and `at 6pm` if you want a time. They accept, it goes up as a fixture.
+• `/tt accept 4` · `/tt decline 4` · `/tt challenges` — answer one, or see what's open
 • `/tt edit 33 21-19 …` — correct a logged match _(admins; `swap` if the sides \
 went in backwards, `void` to throw it out)_
 
@@ -1642,6 +1680,12 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_schedule(command, respond, client, bot_id, logger=logger)
         elif sub == "reschedule":
             handle_reschedule(command, respond, client, logger=logger)
+        elif sub == "challenge":
+            handle_challenge(command, respond, client, bot_id, logger=logger)
+        elif sub in ("accept", "decline"):
+            handle_answer_command(command, respond, client, logger=logger)
+        elif sub == "challenges":
+            handle_challenges(command, respond)
         elif sub == "bet":
             handle_bet(command, respond, client, bot_id, logger=logger)
         elif sub == "wallet":
@@ -1692,6 +1736,8 @@ def build_app(process_before_response=False, token_verification=True):
         app.action(action)(_wrap_action(handle_bet_button))
     app.action(CANCEL_FIXTURE_ACTION)(_wrap_action(handle_cancel_fixture))
     app.action(RESCHEDULE_ACTION)(_wrap_action(handle_reschedule_button))
+    for action in (ACCEPT_ACTION, DECLINE_ACTION, WITHDRAW_ACTION):
+        app.action(action)(_wrap_action(handle_challenge_button))
     app.view(RESCHEDULE_MODAL)(handle_reschedule_modal)
     app.view(BET_MODAL)(handle_bet_modal)
     app.event("member_joined_channel")(handle_member_joined)
@@ -1726,6 +1772,11 @@ BET_MODAL = "tt_bet_modal"
 CANCEL_FIXTURE_ACTION = "tt_fixture_cancel"
 RESCHEDULE_ACTION = "tt_fixture_move"
 RESCHEDULE_MODAL = "tt_reschedule_modal"
+# One per verb: an action_id must be unique inside its actions block, and all
+# three of these sit in the same one on the challenged side's DM.
+ACCEPT_ACTION = "tt_chal_accept"
+DECLINE_ACTION = "tt_chal_decline"
+WITHDRAW_ACTION = "tt_chal_withdraw"
 
 
 def fmt_spins(n):
@@ -2144,6 +2195,247 @@ def handle_cancel_fixture(body, client, respond, logger=None):
                  + (f" {fmt_spins(refunded)} refunded." if refunded else "")),
     ]
     _refresh_with(record, client, blocks, "Fixture called off.", logger=logger)
+
+
+# --- challenges ------------------------------------------------------------
+
+def challenge_line(record, now=None, players=None):
+    """The headline. Carries both ratings, because a challenge is a claim about
+    which of two numbers is the better one."""
+    if players is None:
+        players = store.get_players(record["side_a"] + record["side_b"])
+    a = fmt_side_rated(record["side_a"], players)
+    b = fmt_side_rated(record["side_b"], players)
+    when = challenge.starts_at(record)
+    at = f" · {fmt_when({'starts_at': store.stamp(when)}, now)}" if when else ""
+    return (f":crossed_swords: {a}\n"
+            f"*challenges*\n"
+            f"{b}\n"
+            f"_{challenge.length_note(record)}{at}_")
+
+
+def challenge_blocks(record, now=None):
+    """What the channel sees. Read-only, like a pending result: the buttons go
+    to the people who get to answer, not to everyone who can see the post."""
+    who = fmt_side(record["side_b"])
+    state = record.get("state")
+    if state == "open":
+        tail = (f"Waiting on {who}. Expires in {challenge.EXPIRE_HOURS}h "
+                "if nobody answers.")
+    elif state == "accepted":
+        tail = f"Accepted by <@{record['answered_by']}> — fixture `#{record['fixture']}` is up."
+    elif state == "declined":
+        tail = f"Declined by <@{record['answered_by']}>."
+    elif state == "withdrawn":
+        tail = f"Withdrawn by <@{record['answered_by']}>."
+    else:
+        tail = f"Nobody answered in {challenge.EXPIRE_HOURS}h."
+    players = store.get_players(record["side_a"] + record["side_b"])
+    blocks = [_section(challenge_line(record, now, players))]
+    if state == "open":
+        blocks.append(_context(favourite_line(record["side_a"], record["side_b"],
+                                              players)))
+    blocks.append(_context(f"Challenge `#{record['id']}` · {tail}"))
+    return blocks
+
+
+def challenge_dm_blocks(record, role, now=None):
+    """The DM carrying the buttons, cut to what this person may do."""
+    cid = record["id"]
+    players = store.get_players(record["side_a"] + record["side_b"])
+    head = (challenge_line(record, now, players) + "\n"
+            + favourite_line(record["side_a"], record["side_b"], players))
+    if role == "answer":
+        note = (f"<@{record['from']}> wants a game. "
+                f"{challenge.length_note(record)}. "
+                f"Say yes and it goes up as a fixture the channel can bet on.")
+        buttons = [_button(ACCEPT_ACTION, "⚔️  Accept", cid, style="primary"),
+                   _button(DECLINE_ACTION, "Not today", cid)]
+    else:
+        note = (f"Sent to {fmt_side(record['side_b'])}. "
+                f"Expires in {challenge.EXPIRE_HOURS}h if they don't answer.")
+        buttons = [_button(WITHDRAW_ACTION, "🗑  Take it back", cid)]
+    return [_section(head), _context(note),
+            {"type": "actions", "block_id": f"tt_chal_{cid}", "elements": buttons}]
+
+
+def challenge_audience(record):
+    """{uid: role} — everyone being challenged gets buttons; the challenger gets
+    the one useful action, which is taking it back."""
+    who = {uid: "answer" for uid in record["side_b"]}
+    if record.get("from") and record["from"] not in who:
+        who[record["from"]] = "withdraw"
+    return who
+
+
+def handle_challenge(command, respond, client=None, bot_id=None, logger=None):
+    """`/tt challenge @bob best of 5` — an invitation with a length on it."""
+    caller = command["user_id"]
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    now = store.now_ist()
+    if not rest.strip():
+        respond(":crossed_swords: Challenge who? `/tt challenge @bob best of 5`"
+                " — also `bo7`, `first to 3`, `5 games`, and a time if you want "
+                "one (`at 6pm`).")
+        return
+    try:
+        side_a, side_b, games, first_to, when = parsing.parse_challenge(
+            rest, caller=caller, bot_id=bot_id, now=now,
+            default_games=challenge.DEFAULT_GAMES)
+    except parsing.ParseError as e:
+        respond(f":warning: {e}")
+        return
+
+    standing = challenge.open_between(side_a, side_b)
+    if standing:
+        respond(f":information_source: There's already an open challenge between "
+                f"you two — `#{standing['id']}`, {challenge.length_note(standing)}. "
+                "Answer that one first.")
+        return
+
+    store.ensure_players(side_a + side_b, now)
+    record = challenge.issue(side_a, side_b, games, by=caller, first_to=first_to,
+                             starts_at=when, channel=command.get("channel_id", ""),
+                             now=now)
+    try:
+        resp = client.chat_postMessage(
+            channel=command["channel_id"], blocks=challenge_blocks(record, now),
+            text=f"{plain_side(side_a)} challenges {plain_side(side_b)}.")
+        record["ts"], record["channel"] = resp["ts"], resp["channel"]
+        challenge.save(record)
+    except Exception as e:
+        challenge.claim(record["id"])
+        (logger or log).warning("could not post challenge: %s", e)
+        respond(post_failure(e, command.get("channel_id", ""), bot_id))
+        return
+
+    delivered = 0
+    for uid, role in challenge_audience(record).items():
+        try:
+            client.chat_postMessage(
+                channel=uid, blocks=challenge_dm_blocks(record, role, now),
+                text=f"{plain_side(side_a)} vs {plain_side(side_b)}.")
+            delivered += 1
+        except Exception as e:
+            (logger or log).warning("challenge DM to %s failed: %s", uid, e)
+    if not delivered:
+        respond(":warning: Posted it, but I couldn't DM anyone the buttons — "
+                f"they can answer with `/tt accept {record['id']}`.")
+
+
+def _close_challenge(record, client, now=None, logger=None):
+    """Rewrite the channel post so no live button is left anywhere."""
+    if client and record.get("channel") and record.get("ts"):
+        try:
+            client.chat_update(channel=record["channel"], ts=record["ts"],
+                               blocks=challenge_blocks(record, now),
+                               text="Challenge settled.")
+        except Exception as e:
+            (logger or log).warning("challenge %s update failed: %s",
+                                    record["id"], e)
+
+
+def answer_challenge(cid, user, verb, client, now=None, logger=None):
+    """Accept, decline or withdraw. Returns a message for the caller, or None.
+
+    The claim is the SREM, so two people on the challenged side pressing Accept
+    at the same moment cannot both put a fixture up for the same match.
+    """
+    now = now or store.now_ist()
+    record = challenge.get(cid)
+    if not record:
+        return ":information_source: There's no challenge by that number."
+    if record.get("state") != "open":
+        return f":information_source: That one was already {record['state']}."
+    allowed = (challenge.may_withdraw(record, user) if verb == "withdraw"
+               else challenge.may_answer(record, user))
+    if not allowed:
+        return (":lock: Only whoever threw it down can take it back."
+                if verb == "withdraw" else
+                f":lock: Only {fmt_side(record['side_b'])} can answer that one.")
+    if not challenge.claim(cid):
+        return ":information_source: Someone just answered that one."
+
+    try:
+        if verb == "accept":
+            fixture = challenge.accept(record, user, now=now)
+        elif verb == "decline":
+            challenge.decline(record, user, now)
+        else:
+            challenge.withdraw(record, user, now)
+    except Exception:
+        challenge.release(cid)
+        (logger or log).exception("answering challenge %s failed", cid)
+        return ":x: Something went wrong there — try again in a moment."
+
+    _close_challenge(record, client, now, logger)
+    if verb != "accept":
+        return None
+    try:
+        resp = client.chat_postMessage(
+            channel=fixture["channel"] or record.get("channel", ""),
+            blocks=fixture_blocks(fixture, now),
+            text=f"{plain_side(fixture['side_a'])} vs {plain_side(fixture['side_b'])}, "
+                 f"{fmt_when(fixture, now)}.")
+        fixture["ts"], fixture["channel"] = resp["ts"], resp["channel"]
+        betting.save(fixture)
+    except Exception as e:
+        (logger or log).warning("could not post accepted fixture: %s", e)
+        return (":warning: Challenge accepted, but I couldn't put the fixture up "
+                "where people can bet on it.")
+    return None
+
+
+def handle_challenge_button(body, client, respond, logger=None):
+    verb = {ACCEPT_ACTION: "accept", DECLINE_ACTION: "decline",
+            WITHDRAW_ACTION: "withdraw"}[_action_id(body)]
+    error = answer_challenge(_action_value(body), body["user"]["id"], verb,
+                             client, logger=logger)
+    if error:
+        _only_you(respond, error)
+        return
+    said = {"accept": ":crossed_swords: You're on. Fixture's up.",
+            "decline": ":wave: Turned it down.",
+            "withdraw": ":wastebasket: Taken back."}[verb]
+    _only_you(respond, said)
+
+
+def handle_answer_command(command, respond, client=None, logger=None):
+    """`/tt accept 4` · `/tt decline 4` — for when the DM never arrived."""
+    sub, rest = parsing.split_subcommand(command.get("text", ""))
+    verb = {"accept": "accept", "decline": "decline"}[sub]
+    cid = rest.strip().lstrip("#")
+    if not cid.isdigit():
+        mine = [r for r in challenge.live()
+                if challenge.may_answer(r, command["user_id"])]
+        if not mine:
+            respond(":grey_question: No open challenges waiting on you.")
+            return
+        lines = [f"`#{r['id']}`  {fmt_side(r['side_a'])} — "
+                 f"{challenge.length_note(r)}" for r in mine]
+        respond(f":crossed_swords: *Which one?*  `/tt {verb} {mine[0]['id']}`\n"
+                + "\n".join(lines))
+        return
+    error = answer_challenge(cid, command["user_id"], verb, client, logger=logger)
+    respond(error or (":crossed_swords: You're on." if verb == "accept"
+                      else ":wave: Turned it down."))
+
+
+def handle_challenges(command, respond):
+    """`/tt challenges` — what's outstanding, and who owes an answer."""
+    now = store.now_ist()
+    records = challenge.live()
+    if not records:
+        respond(":crossed_swords: No open challenges. "
+                "`/tt challenge @bob best of 5` starts one.")
+        return
+    lines = [":crossed_swords: *Open challenges*"]
+    for r in records:
+        lines.append(f"`#{r['id']}`  {fmt_side(r['side_a'])} vs "
+                     f"{fmt_side(r['side_b'])} — {challenge.length_note(r)}"
+                     + (f" · {fmt_when(r, now)}" if challenge.starts_at(r) else "")
+                     + f"  _waiting on {fmt_side(r['side_b'])}_")
+    respond("\n".join(lines))
 
 
 def may_move(record, user):

@@ -206,6 +206,30 @@ def sweep_fixtures(client, now=None, dry_run=False, logger=None):
     return {"closed": closed, "refunded": voided}
 
 
+def sweep_challenges(client, now=None, dry_run=False, logger=None):
+    """Close challenges nobody answered.
+
+    An invitation that stays open for a week isn't an invitation, it's clutter —
+    and it blocks the same pair from issuing a fresh one, since only one can be
+    open between two sides at a time.
+    """
+    import challenge
+    now = now or store.now_ist()
+    expired = []
+    for record in challenge.live():
+        if not challenge.is_expired(record, now):
+            continue
+        if dry_run:
+            expired.append(record["id"])
+            continue
+        if not challenge.claim(record["id"]):
+            continue
+        challenge.expire(record, now)
+        bot._close_challenge(record, client, now, logger=logger)
+        expired.append(record["id"])
+    return {"expired": expired}
+
+
 def _update_original(client, blob, logger=None):
     """Replace every prompt with the outcome — the channel post and each verdict
     DM — so nothing keeps offering buttons for a session already rated."""
