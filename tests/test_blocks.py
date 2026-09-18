@@ -11,6 +11,7 @@ import pytest
 
 import betting
 import bot
+import elo
 import store
 from tests.fake_kv import FakeRedis
 
@@ -204,7 +205,7 @@ def test_the_edit_preview_is_valid(fake, monkeypatch, text):
 def test_the_edit_button_value_fits_slacks_limit(fake, monkeypatch):
     """The whole edit spec rides in the button's value, and a long session is
     the case that would push it over."""
-    games = tuple((21, 10) for _ in range(25))          # elo.MAX_GAMES
+    games = tuple((21, 10) for _ in range(elo.MAX_GAMES))
     text = "edit 1 " + " ".join(f"{a}-{b}" for a, b in games)
     blocks = _edit_blocks(fake, monkeypatch, text, games=((21, 14),))
     button = next(el for b in blocks if b["type"] == "actions"

@@ -71,21 +71,29 @@ def test_a_ledger_outage_never_costs_anyone_spins(fake, monkeypatch):
 
 # --- the stipend -----------------------------------------------------------
 
+# Both switch positions are tested explicitly rather than either one riding on
+# whatever WEEKLY_STIPEND happens to be set to. It has been flipped twice now,
+# and each time these tests broke for a reason that had nothing to do with them.
 @pytest.fixture
 def stipend_on(monkeypatch):
-    """The stipend is off by default; these cover it being switched back on."""
     monkeypatch.setattr(betting, "WEEKLY_STIPEND", 1000)
     return 1000
 
 
-def test_no_stipend_is_paid_while_it_is_switched_off(fake):
+@pytest.fixture
+def stipend_off(monkeypatch):
+    monkeypatch.setattr(betting, "WEEKLY_STIPEND", 0)
+    return 0
+
+
+def test_no_stipend_is_paid_while_it_is_switched_off(fake, stipend_off):
     store.ensure_players([A])
     betting.ensure_wallets([A])
     assert betting.pay_stipend(week="tt:wk:2026-W38")["status"] == "disabled"
     assert betting.balance(A) == betting.START_SPINS
 
 
-def test_switching_it_off_does_not_consume_the_week(fake, monkeypatch):
+def test_switching_it_off_does_not_consume_the_week(fake, monkeypatch, stipend_off):
     """Turning it back on should pay the week it is turned on in, not skip it
     because a disabled run had already marked that week done."""
     store.ensure_players([A])

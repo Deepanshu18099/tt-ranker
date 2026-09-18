@@ -33,13 +33,15 @@ import store
 
 CURRENCY = "spins"
 START_SPINS = 5000
-# Off. Set it above zero to hand every player that many spins at the start of
-# each week; the cron jobs already call the payer, and it claims each week once.
+# Handed to every player at the start of each week. The cron jobs call the payer
+# and it claims each week once, so whichever job fires first that week pays and
+# the rest are no-ops.
 #
-# With it off, the only spins in the system are the ones people opened with, so
-# the pool is finite and losing actually costs something. That also means a
-# player who busts out stays busted until an admin moves some across with
-# `/tt transfer`, which is a deliberate trade rather than an oversight.
+# Set to zero, the only spins in the system are the ones people opened with: the
+# pool is finite and losing costs something real. But a player who busts out then
+# stays busted until an admin moves some across with `/tt transfer`, and people
+# did bust out. This is the floor that lets them back in — losing everything
+# costs you a week, not the game.
 WEEKLY_STIPEND = 1000
 MIN_BET = 5
 

@@ -103,8 +103,8 @@ correction rather than retyping the whole thing. Both routes run the same
 validation and end at the same confirmation prompt.
 
 Scores are **the points in each game**, one per game: `11-7 9-11 11-5` is three
-games won 2–1. There's no fixed session length — log two games or twenty, up to
-25. Games to 11, to 21 and first-to-7 all work, and you can mix them in one
+games won 2–1. There's no fixed session length — log two games or ten, which is
+the cap. Games to 11, to 21 and first-to-7 all work, and you can mix them in one
 session. `11 - 7`, `11:7` and `11–7` are all read the same way. The word `log`
 is optional once you know the bot — `/tt @bob 11-7` works.
 
@@ -926,7 +926,7 @@ rather than silently meaning it.
 | | |
 |---|---|
 | Everyone starts with | **5,000** |
-| Top-ups | **none** — `WEEKLY_STIPEND = 0` |
+| Top-ups | **1,000 a week**, every player — `WEEKLY_STIPEND` |
 | Smallest stake | **5** |
 
 A wallet can never go negative — stakes leave when the bet is placed and
@@ -942,10 +942,12 @@ with, and the same table sits on the ladder page under *Spins* once anyone has
 moved. Players who never placed a bet are ranked at 5,000 rather than left off
 — that is what their wallet would hold the moment it opened.
 
-The trade is that busting out is permanent until an admin moves some across with
-`/tt transfer`. A weekly stipend is one constant away if that turns out to be
-too harsh — set `WEEKLY_STIPEND` above zero in [betting.py](betting.py) and both
-cron jobs start paying it, claimed once a week so it can't be paid twice.
+Busting out used to be permanent until an admin moved some across with
+`/tt transfer`, and people did bust out. So every player is now topped up by
+`WEEKLY_STIPEND` at the start of each week — both cron jobs pay it, claimed once
+a week so it can't be paid twice. Losing everything costs you a week, not the
+game. Set the constant to zero in [betting.py](betting.py) to close the tap
+again and make the pool finite.
 
 ### Moving spins
 

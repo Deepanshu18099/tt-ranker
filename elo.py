@@ -100,7 +100,10 @@ UPSET_SCALE = 2.2
 UPSET_GAP_CAP = 800  # keeps the denominator far from zero, which would flip signs
 
 MAX_POINTS = 99  # a game score above this is a typo, not a marathon
-MAX_GAMES = 25   # sessions are any length; this is only a fat-finger guard
+# Sessions are any length; this is only a fat-finger guard. Set from what people
+# actually play — the median session is 3 games and the longest ever recorded is
+# 6 — so anything past this is a mistyped score line, not an epic evening.
+MAX_GAMES = 10
 
 
 def expected(rating_a, rating_b):
@@ -207,10 +210,12 @@ def games_played(player):
 def session_weights(rating_a, rating_b, games):
     """One `mov · upset · (result − E)` per game, from side A's point of view.
 
-    Per game rather than summed, because K is per game too: a player's tenth
-    game of the evening should not move them as far as their first did. A dead
-    heat contributes 0.0 rather than being dropped, so the list stays aligned
-    with the games it came from and the K counter advances over it.
+    One entry per game rather than a single total, so the caller knows how many
+    games a session ran to — that length is what session_k() averages its K
+    over. The session is still rated on the sum of these: every game in it
+    carries the same K, which is what keeps a 2-2 split cancelling. A dead heat
+    contributes 0.0 rather than being dropped, so the list stays aligned with
+    the games it came from and the count stays honest.
 
     Side B's weights are exactly the negatives of these — same mov, same upset
     correction, and (1−result) − (1−E) == −(result − E) — which is what keeps
