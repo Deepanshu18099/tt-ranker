@@ -40,7 +40,7 @@ START_SPINS = 5000
 # the pool is finite and losing actually costs something. That also means a
 # player who busts out stays busted until an admin moves some across with
 # `/tt transfer`, which is a deliberate trade rather than an oversight.
-WEEKLY_STIPEND = 0
+WEEKLY_STIPEND = 1000
 MIN_BET = 5
 
 WALLET_KEY = "tt:wallet"
