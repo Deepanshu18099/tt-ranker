@@ -24,6 +24,21 @@ def e(text):
     return html.escape(str(text), quote=True)
 
 
+def player_href(uid, view=""):
+    """Where a player's name points. One helper, used by every page that draws
+    a person, so nobody's name is a dead end on one page and a link on the next
+    — and so the format tab a reader is on travels with them rather than
+    dumping them back on Singles."""
+    return f"/player/{uid}" + (f"?view={view}" if view else "")
+
+
+def player_link(uid, names, view="", classes="", extra=""):
+    """A name that goes to the person it names."""
+    css = f' class="{classes}"' if classes else ""
+    return (f'<a{css} href="{e(player_href(uid, view))}"{extra}>'
+            f'{e(display_name(uid, names))}</a>')
+
+
 def display_name(uid, names):
     """What to call someone. Falls back to the tail of their Slack id, which is
     at least stable and short, rather than an empty row."""
@@ -199,7 +214,8 @@ def match_card(blob, names, view=derive.OVERALL, titles=None):
     def side(uids, won, extra=""):
         people = "".join(
             f'{avatar(uid, names, "avatar-sm")}'
-            f'<span class="side-name">{e(display_name(uid, names))}</span>'
+            + player_link(uid, names, view if view != derive.OVERALL else "",
+                          classes="side-name")
             + titles_of(uid, titles, limit=1)
             for uid in uids)
         moved = " · ".join(
@@ -319,6 +335,95 @@ def stat_card(label, value, detail=""):
             f'<span class="sc-label">{e(label)}</span>'
             + (f'<span class="sc-detail">{detail}</span>' if detail else "")
             + "</li>")
+
+
+# --- turning up --------------------------------------------------------------
+
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def heatmap(columns, counts, span, busiest=None):
+    """A year of turning up, one square per day, drawn as a CSS grid.
+
+    No chart library and no canvas: the page makes no external requests and a
+    heatmap is a table of squares, which CSS already draws. Every square carries
+    its own date and count in `title` and in text a screen reader can reach, so
+    the graph is readable without seeing a single shade — colour is the summary
+    here, never the information.
+    """
+    if not columns:
+        return ""
+    busiest = busiest or max(counts.values() or [0])
+    cells = []
+    for week in columns:
+        column = []
+        for cell in week:
+            if cell is None:
+                column.append('<span class="heat heat-off"></span>')
+                continue
+            day, count = cell
+            level = derive.heat_level(count, busiest)
+            said = (f"{count} match{'es' if count != 1 else ''} on "
+                    f"{day.day} {MONTHS[day.month - 1]}" if count
+                    else f"No matches on {day.day} {MONTHS[day.month - 1]}")
+            column.append(f'<span class="heat heat-{level}" title="{e(said)}">'
+                          f'<span class="sr-only">{e(said)}. </span></span>')
+        cells.append(f'<div class="heat-col">{"".join(column)}</div>')
+
+    days = "".join(f'<span class="heat-day">{WEEKDAYS[i] if i % 2 else ""}</span>'
+                   for i in range(7))
+    return (f'<div class="heat-wrap"><div class="heat-days">{days}</div>'
+            f'<div class="heat-scroll"><div class="heat-grid" role="img" '
+            f'aria-label="{e(_heat_summary(counts, span))}">'
+            + "".join(cells) + "</div>"
+            + _heat_months(columns) + "</div></div>"
+            + _heat_key(busiest))
+
+
+def _heat_summary(counts, span):
+    played = sum(counts.values())
+    days = len(counts)
+    start, end = span
+    return (f"{played} match{'es' if played != 1 else ''} on {days} "
+            f"day{'s' if days != 1 else ''}, {start.day} {MONTHS[start.month - 1]} "
+            f"to {end.day} {MONTHS[end.month - 1]}")
+
+
+MONTH_GAP = 3   # columns a label needs before the next one, or they collide
+
+
+def _heat_months(columns):
+    """A month label over the column its first week falls in, the way every
+    graph of this shape is read.
+
+    A label is wider than the 11px column it sits over, so one is skipped when
+    the month before it only got a week or two on screen — two month names
+    printed on top of each other is worse than one of them missing.
+    """
+    labels, last, since = [], None, MONTH_GAP
+    for week in columns:
+        day = next((cell[0] for cell in week if cell), None)
+        new_month = bool(day) and day.month != last
+        if new_month and since >= MONTH_GAP:
+            labels.append('<span class="heat-month">%s</span>' % MONTHS[day.month - 1])
+            last, since = day.month, 0
+        else:
+            labels.append('<span class="heat-month"></span>')
+            if new_month:
+                last = day.month
+            since += 1
+    return '<div class="heat-months">%s</div>' % "".join(labels)
+
+
+def _heat_key(busiest):
+    swatches = "".join(f'<span class="heat heat-{level}"></span>'
+                       for level in range(derive.HEAT_LEVELS + 1))
+    return ('<p class="heat-key"><span>Quieter</span>'
+            f'{swatches}<span>Busier</span>'
+            f'<span class="heat-key-note">Busiest day: {busiest} '
+            f"match{'es' if busiest != 1 else ''}</span></p>")
 
 
 # --- rating history ---------------------------------------------------------

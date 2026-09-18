@@ -9,7 +9,7 @@ from .. import derive, layout
 
 
 def render(players, names, history=(), week="", log_href="", channel_hint="",
-           updated="", window=0):
+           updated="", window=0, view=""):
     figures = derive.numbers(players, history, names)
     stats = []
     if players:
@@ -33,11 +33,13 @@ def render(players, names, history=(), week="", log_href="", channel_hint="",
         counted = [row for row in figures if row[3] == "matches"]
         if leaders:
             body.append(c.section(
-                "Leaders", f'<ul class="sc-grid">{_cards(leaders)}</ul>',
+                "Leaders",
+                f'<ul class="sc-grid">{_cards(leaders, names, view)}</ul>',
                 eyebrow="From the players' own records", classes="rise-1"))
         if counted:
             body.append(c.section(
-                "From the matches", f'<ul class="sc-grid">{_cards(counted)}</ul>',
+                "From the matches",
+                f'<ul class="sc-grid">{_cards(counted, names, view)}</ul>',
                 note=_window_note(window, history), classes="rise-2"))
     body.append(_rivalry(history, names))
     return layout.document("The Numbers — RALLY",
@@ -46,9 +48,17 @@ def render(players, names, history=(), week="", log_href="", channel_hint="",
                            channel_hint=channel_hint, updated=updated)
 
 
-def _cards(figures):
-    return "".join(c.stat_card(label, value, detail)
-                   for label, value, detail, _ in figures)
+def _cards(figures, names=None, view=""):
+    """A figure that belongs to one person names them as a link — the same link
+    their name is anywhere else on the site."""
+    out = []
+    for label, value, detail, _, uid in figures:
+        if uid:
+            detail = detail.replace(
+                c.e(c.display_name(uid, names or {})),
+                c.player_link(uid, names or {}, view), 1)
+        out.append(c.stat_card(label, value, detail))
+    return "".join(out)
 
 
 def _window_note(window, history):

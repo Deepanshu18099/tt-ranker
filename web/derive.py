@@ -257,6 +257,75 @@ def group_by_day(history, now):
     return out
 
 
+# --- turning up --------------------------------------------------------------
+
+# A year is what a contributions graph means, but the ladder only keeps a
+# player's last PLAYER_HISTORY_LIMIT matches, so the grid is drawn from the
+# oldest session we can still see rather than from a fixed year ago. Every cell
+# on it is then a day we actually know about: an empty square means nobody
+# played, never "we threw that away".
+HEAT_WEEKS = 52
+HEAT_LEVELS = 4
+
+
+def contributions(history, uid, now, view=OVERALL, weeks=HEAT_WEEKS):
+    """The contributions grid: (columns, counts, span).
+
+    `columns` is a list of weeks, each a list of seven (date, count) cells
+    running Monday to Sunday, oldest week first — the shape a heatmap is drawn
+    in. Cells outside the span are None, so the first and last weeks can be
+    partial without the grid lying about them.
+
+    `counts` is {date: matches}. `span` is (first day drawn, last day drawn).
+    """
+    from datetime import timedelta
+    mine = [blob for blob in history
+            if uid in tuple(blob.get("side_a", ())) + tuple(blob.get("side_b", ()))
+            and in_view(blob, view)]
+    days = [day for day in (_day_of(blob) for blob in mine) if day]
+    if not days:
+        return [], {}, None
+
+    today = now.date()
+    earliest = today - timedelta(weeks=weeks) + timedelta(days=1)
+    start = max(min(days), earliest)
+    counts = {}
+    for day in days:
+        if start <= day <= today:
+            counts[day] = counts.get(day, 0) + 1
+
+    # Whole weeks, Monday first, so the rows line up as weekdays the way every
+    # graph of this shape does.
+    first_column = start - timedelta(days=start.weekday())
+    columns, cursor = [], first_column
+    while cursor <= today:
+        week = []
+        for offset in range(7):
+            day = cursor + timedelta(days=offset)
+            week.append((day, counts.get(day, 0)) if start <= day <= today else None)
+        columns.append(week)
+        cursor += timedelta(days=7)
+    return columns, counts, (start, today)
+
+
+def heat_level(count, busiest):
+    """Which of the HEAT_LEVELS shades a day's count earns, 0 for none.
+
+    Scaled to the busiest day rather than to a fixed count, because a ladder
+    where four sessions is a big day and one where four is a Tuesday should both
+    produce a graph with some dark squares in it.
+    """
+    import math
+    if not count:
+        return 0
+    # A quiet ladder counts literally: one session is one shade, and the darkest
+    # is only reached by someone who really did play four times in a day.
+    if busiest <= HEAT_LEVELS:
+        return min(count, HEAT_LEVELS)
+    return max(1, min(HEAT_LEVELS,
+                      math.ceil(count / (busiest / float(HEAT_LEVELS)))))
+
+
 # --- the week's one match ---------------------------------------------------
 
 def match_of_week(history, week):
@@ -318,29 +387,35 @@ def numbers(players, history, names=None):
     def who(uid):
         return (names or {}).get(uid) or uid
 
-    def add(label, value, detail, source):
-        out.append((label, value, detail, source))
+    def add(label, value, detail, source, uid=""):
+        """`uid` is whose figure it is, where it is one person's — the stats
+        page turns it into a link, so a name there goes to the same place a
+        name anywhere else does."""
+        out.append((label, value, detail, source, uid))
 
     rated = [(uid, p) for uid, p in players.items() if games_played(p)]
     if rated:
         top = max(rated, key=lambda i: i[1]["rating"])
-        add("Highest rating", top[1]["rating"], who(top[0]), "players")
+        add("Highest rating", top[1]["rating"], who(top[0]), "players", top[0])
 
         peak = max(rated, key=lambda i: i[1]["peak"])
         if peak[1]["peak"] > peak[1]["rating"]:
             add("Highest ever", peak[1]["peak"], f"{who(peak[0])}, since fallen",
-                "players")
+                "players", peak[0])
 
         busiest = max(rated, key=lambda i: (i[1]["matches"], games_played(i[1])))
-        add("Most matches", busiest[1]["matches"], who(busiest[0]), "players")
+        add("Most matches", busiest[1]["matches"], who(busiest[0]), "players",
+            busiest[0])
 
         most_games = max(rated, key=lambda i: games_played(i[1]))
-        add("Most games", games_played(most_games[1]), who(most_games[0]), "players")
+        add("Most games", games_played(most_games[1]), who(most_games[0]),
+            "players", most_games[0])
 
         winners = [(uid, p) for uid, p in rated if p["wins"]]
         if winners:
             most_wins = max(winners, key=lambda i: i[1]["wins"])
-            add("Most wins", most_wins[1]["wins"], who(most_wins[0]), "players")
+            add("Most wins", most_wins[1]["wins"], who(most_wins[0]), "players",
+                most_wins[0])
             # A win rate off two games is noise, so it is gated on the same
             # number of games the overall board asks for before it ranks anyone.
             eligible = [(uid, p) for uid, p in rated if games_played(p) >= 6]
@@ -349,19 +424,19 @@ def numbers(players, history, names=None):
                 rate = round(100 * best[1]["games_won"] / games_played(best[1]))
                 add("Best win rate", f"{rate}%",
                     f"{who(best[0])} · {best[1]['games_won']} of "
-                    f"{games_played(best[1])} games", "players")
+                    f"{games_played(best[1])} games", "players", best[0])
 
         streaks = [(uid, p) for uid, p in rated if p["best_streak"] >= 2]
         if streaks:
             longest = max(streaks, key=lambda i: i[1]["best_streak"])
             add("Longest win streak", longest[1]["best_streak"], who(longest[0]),
-                "players")
+                "players", longest[0])
 
         cold = [(uid, p) for uid, p in rated if p["streak"] <= -2]
         if cold:
             worst = min(cold, key=lambda i: i[1]["streak"])
             add("Coldest streak", abs(worst[1]["streak"]),
-                f"{who(worst[0])} · still running", "players")
+                f"{who(worst[0])} · still running", "players", worst[0])
 
     if history:
         gains = [(uid, delta, blob) for blob in history
@@ -369,7 +444,7 @@ def numbers(players, history, names=None):
         if gains:
             uid, delta, blob = max(gains, key=lambda item: item[1])
             add("Biggest single gain", f"+{delta}",
-                f"{who(uid)} · {_sides(blob, names)}", "matches")
+                f"{who(uid)} · {_sides(blob, names)}", "matches", uid)
 
         closest = _closest(history)
         if closest:

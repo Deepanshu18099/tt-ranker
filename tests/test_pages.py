@@ -478,3 +478,72 @@ def test_a_page_given_no_titles_is_still_the_page():
     people = {A: player(rating=1100, matches=4, games_won=12, games_lost=4)}
     html = page_ladder.render(people, NAMES, [], {}, {}, 1)
     assert "<h1" in html and "title-chip" not in html.split("</style>")[1]
+# --- turning up, and getting there -----------------------------------------
+
+def dated(back, uid=A, other=B):
+    from datetime import timedelta
+    blob = match(side_a=[uid], side_b=[other])
+    blob["applied_at"] = (now() - timedelta(days=back)).isoformat()
+    return blob
+
+
+def test_the_profile_draws_a_square_for_every_day_it_knows_about():
+    history = [dated(0), dated(0), dated(4), dated(11)]
+    html = profile.render(A, player(matches=4, games_won=8, games_lost=4),
+                          {A: player(), B: player()}, NAMES, history,
+                          placement_games=1, now=now())
+    assert "Turning up" in body(html)
+    # 12 days inclusive, and the two on one day are one darker square.
+    assert html.count('class="heat heat-') >= 12
+    assert "2 matches on" in html          # the day they played twice
+    assert "as far back as the ladder keeps" in html
+
+
+def test_the_graph_says_every_count_in_words_as_well_as_a_shade():
+    """Colour is the summary here, never the information."""
+    html = profile.render(A, player(matches=2, games_won=4), {A: player()},
+                          NAMES, [dated(0), dated(4)], placement_games=1, now=now())
+    # The played days and the quiet ones in between, each said in words.
+    assert "No matches on" in body(html) and "1 match on" in body(html)
+    assert 'role="img"' in body(html) and "aria-label=" in body(html)
+
+
+def test_a_player_with_no_history_gets_no_graph():
+    html = profile.render(A, player(), {A: player()}, NAMES, [],
+                          placement_games=1, now=now())
+    assert "Turning up" not in body(html)
+
+
+def test_the_graph_is_left_out_when_the_page_is_not_told_the_date():
+    """`now` is the caller's to supply — the page never reaches for a clock of
+    its own, which is what keeps it renderable in a test."""
+    html = profile.render(A, player(matches=1), {A: player()}, NAMES, [dated(0)],
+                          placement_games=1)
+    assert "Turning up" not in body(html)
+
+
+def test_a_name_goes_to_the_person_it_names_on_every_page():
+    from web.pages import ladder as page_ladder
+    from web.pages import matches as page_matches
+    from web.pages import stats as page_stats
+
+    people = {A: player(rating=1100, wins=4, games_won=12, games_lost=4, matches=4),
+              B: player(rating=900, losses=4, games_won=4, games_lost=12, matches=4)}
+    history = [match()]
+    pages = {
+        "ladder": page_ladder.render(people, NAMES, history, {}, {}, 1,
+                                     history=history),
+        "matches": page_matches.render(history, people, NAMES, now=now()),
+        "stats": page_stats.render(people, NAMES, history),
+        "profile": profile.render(A, people[A], people, NAMES, history,
+                                  placement_games=1, now=now()),
+    }
+    for name, html in pages.items():
+        assert f'href="/player/{A}"' in html, f"{name} leaves the name a dead end"
+
+
+def test_a_link_keeps_the_reader_on_the_format_they_were_reading():
+    from web.pages import ladder as page_ladder
+    people = {A: player(rating=1100, matches=4, games_won=12, games_lost=4)}
+    html = page_ladder.render(people, NAMES, [], {}, {}, 1, view="doubles")
+    assert f'href="/player/{A}?view=doubles"' in html

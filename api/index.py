@@ -331,7 +331,8 @@ def _render_profile(uid):
     body = page_profile.render(
         uid, shown[uid], shown, history=history, week=week, view=view,
         placement_games=placement, rank=rank, delta=delta, played=played,
-        known=known, versus=versus, titles=_titles(), **common)
+        known=known, versus=versus, titles=_titles(), now=store.now_ist(),
+        **common)
     return body, 200, CACHE
 
 
@@ -411,7 +412,7 @@ def _render_stats():
     players = common.pop("players")
     body = page_stats.render(
         players, history=store.recent_matches(limit=HISTORY_WINDOW),
-        week=store.week_key(), window=HISTORY_WINDOW, **common)
+        week=store.week_key(), window=HISTORY_WINDOW, view=_view(), **common)
     return body, 200, CACHE
 
 

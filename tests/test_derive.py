@@ -270,7 +270,8 @@ def test_every_figure_says_where_it_came_from():
     players = {A: player(rating=1050, wins=3, games_won=8, games_lost=2, matches=4)}
     rows = derive.numbers(players, [match([A], [B], 2, 0, deltas={A: 12})])
     assert {row[3] for row in rows} == {"players", "matches"}
-    assert ("Highest rating", 1050, A, "players") in rows
+    # The fifth field is whose figure it is, so the stats page can link the name.
+    assert ("Highest rating", 1050, A, "players", A) in rows
 
 
 def test_a_win_rate_needs_enough_games_to_mean_anything():
@@ -296,3 +297,70 @@ def test_a_scoreline_seen_once_is_not_the_most_common():
     history[0]["games"] = [[11, 7]]
     assert not [row for row in derive.numbers({A: player(games_won=1)}, history)
                 if row[0] == "Most common game"]
+
+
+# --- turning up ------------------------------------------------------------
+
+from datetime import datetime, timedelta  # noqa: E402
+
+import store  # noqa: E402
+
+NOW = datetime(2026, 9, 18, 19, 30, tzinfo=store.IST)
+
+
+def day(back, hour=12):
+    from datetime import timedelta
+    return (NOW - timedelta(days=back)).replace(hour=hour).isoformat()
+
+
+def played(back, uid=A, other=B):
+    blob = match([uid], [other], 2, 0)
+    blob["applied_at"] = day(back)
+    return blob
+
+
+def test_the_grid_is_whole_weeks_of_real_days():
+    columns, counts, span = derive.contributions(
+        [played(0), played(0), played(9)], A, NOW)
+    assert all(len(week) == 7 for week in columns)
+    assert counts[NOW.date()] == 2
+    start, end = span
+    assert end == NOW.date()
+    # Drawn from the oldest session, not from a year ago that we can't see.
+    assert start == (NOW - timedelta(days=9)).date()
+
+
+def test_days_outside_the_span_are_not_drawn_as_quiet_days():
+    """An empty square has to mean nobody played. A day we have no record of is
+    a different claim, so it is left out of the grid entirely."""
+    columns, _, (start, end) = derive.contributions([played(3)], A, NOW)
+    drawn = [cell for week in columns for cell in week if cell]
+    assert all(start <= d <= end for d, _ in drawn)
+    assert len(drawn) == (end - start).days + 1
+
+
+def test_a_player_with_nothing_on_record_gets_no_grid():
+    assert derive.contributions([], A, NOW) == ([], {}, None)
+    assert derive.contributions([played(1, uid=C, other=D)], A, NOW)[0] == []
+
+
+def test_the_grid_follows_the_format_tab():
+    doubles = match([A, C], [B, D], 2, 0, doubles=True)
+    doubles["applied_at"] = day(1)
+    singles_only = derive.contributions([doubles, played(2)], A, NOW, view="")
+    both = derive.contributions([doubles, played(2)], A, NOW, view=derive.OVERALL)
+    assert sum(singles_only[1].values()) == 1
+    assert sum(both[1].values()) == 2
+
+
+def test_a_quiet_ladder_counts_its_days_literally():
+    """Four sessions in a day is a lot here. Scaling to the busiest day would
+    make one session look like a heavy day on a week where nobody played twice."""
+    assert derive.heat_level(0, 3) == 0
+    assert [derive.heat_level(n, 3) for n in (1, 2, 3)] == [1, 2, 3]
+
+
+def test_a_busy_ladder_scales_to_its_busiest_day():
+    assert derive.heat_level(1, 12) == 1
+    assert derive.heat_level(12, 12) == derive.HEAT_LEVELS
+    assert derive.heat_level(6, 12) < derive.HEAT_LEVELS
