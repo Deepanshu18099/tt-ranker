@@ -13,7 +13,8 @@ from .. import derive, layout
 
 def render(players, names, history=(), week="", view="", placement_games=4,
            week_delta=None, week_played=None, query="", compare=(),
-           comparing=False, slots=0, log_href="", channel_hint="", updated=""):
+           comparing=False, slots=0, log_href="", channel_hint="", updated="",
+           titles=None):
     """`query` narrows the grid by name. It is applied here as well as in the
     browser so the no-script path and a shared link both work; with script, the
     same box filters what is already on screen and never waits for a round
@@ -42,7 +43,7 @@ def render(players, names, history=(), week="", view="", placement_games=4,
             picked=uid in (compare or ()),
             movement=(c.movement(delta.get(uid, 0), played.get(uid, 0), compact=True)
                       if known else ""),
-            form=form.get(uid, ""), href=_href(uid, view))
+            form=form.get(uid, ""), href=_href(uid, view), titles=titles)
 
     body = [c.page_header(
         "Players", eyebrow="The league",

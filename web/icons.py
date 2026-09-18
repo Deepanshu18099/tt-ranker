@@ -60,6 +60,25 @@ def palette():
                  '<path d="M8 6v12"/>')
 
 
+# --- titles ----------------------------------------------------------------
+# One glyph per title, so a badge is never colour alone.
+
+def bolt():
+    """Turning up, over and over."""
+    return _icon('<path d="M13 3 5 14h6l-1 7 8-11h-6l1-7Z"/>')
+
+
+def crown():
+    """The best record anyone has."""
+    return _icon('<path d="M4 8l3.5 4L12 5l4.5 7L20 8v9H4V8Z"/>')
+
+
+def coin():
+    """The fattest wallet."""
+    return _icon('<circle cx="12" cy="12" r="8"/><path d="M12 8v8M9.5 9.8h4'
+                 'a1.7 1.7 0 0 1 0 3.4h-3a1.7 1.7 0 0 0 0 3.4h4"/>')
+
+
 # --- brand geometry --------------------------------------------------------
 # Abstract, never illustrative: an arc is the flight of a rally, a circle is the
 # ball, a straight run of hairlines is the table. They sit behind content at low

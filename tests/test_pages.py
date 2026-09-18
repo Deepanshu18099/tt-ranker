@@ -8,6 +8,7 @@ import re
 
 import pytest
 
+import awards
 from web.pages import compare, errors, log, matches, players, profile, stats
 
 A, B, C = "U0A", "U0B", "U0C"
@@ -425,3 +426,55 @@ def test_the_popup_renders_the_same_comparison_without_the_page():
     bare = compare.render([A, B], people, NAMES, bare=True)
     assert "<!doctype html>" not in bare and "<nav" not in bare
     assert "Side by side" in bare
+
+
+# --- titles ----------------------------------------------------------------
+
+TITLES_HELD = {"hot": A, "moneybags": B}
+WORN = {A: ["hot"], B: ["moneybags"]}
+
+
+def test_the_titles_page_lists_every_title_held_or_not():
+    from web.pages import titles as page_titles
+    html = page_titles.render(TITLES_HELD, {A: player(), B: player()}, NAMES)
+    for title in awards.TITLES:
+        assert title.name in html and title.blurb in html
+    assert "Going spare" in html          # the three nobody holds
+    assert f'href="/player/{A}"' in html
+
+
+def test_a_title_follows_the_player_onto_every_page():
+    """The point of the feature: a chip is not a section on one page, it is
+    part of how a person is rendered."""
+    from web.pages import compare as page_compare
+    from web.pages import ladder as page_ladder
+    from web.pages import matches as page_matches
+    from web.pages import players as page_players
+    from web.pages import profile as page_profile
+
+    people = {A: player(rating=1100, wins=4, games_won=12, games_lost=4, matches=4),
+              B: player(rating=900, losses=4, games_won=4, games_lost=12, matches=4)}
+    history = [match()]
+    pages = {
+        "ladder": page_ladder.render(people, NAMES, history, {}, {}, 1,
+                                     history=history, titles=WORN),
+        "players": page_players.render(people, NAMES, history, placement_games=1,
+                                       titles=WORN),
+        "matches": page_matches.render(history, people, NAMES, now=now(),
+                                       titles=WORN),
+        "profile": page_profile.render(A, people[A], people, NAMES, history,
+                                       placement_games=1, titles=WORN),
+        "compare": page_compare.render([A, B], people, NAMES, history,
+                                       titles=WORN),
+    }
+    for name, html in pages.items():
+        assert "On Fire" in html, f"{name} is not showing the title"
+
+
+def test_a_page_given_no_titles_is_still_the_page():
+    """Every chip is optional everywhere. The titles table is a cache read that
+    is allowed to fail, so no page may depend on it."""
+    from web.pages import ladder as page_ladder
+    people = {A: player(rating=1100, matches=4, games_won=12, games_lost=4)}
+    html = page_ladder.render(people, NAMES, [], {}, {}, 1)
+    assert "<h1" in html and "title-chip" not in html.split("</style>")[1]

@@ -802,6 +802,38 @@ eleven, and there is a test that the stylesheet names no colour of its own.
 Every theme clears WCAG AA on body text, muted text and text on a filled
 control, and that is asserted rather than eyeballed.
 
+**Titles.** A rating says how good you are; it says nothing about who turned up
+four nights running, who cannot lose at the moment, who cannot win at the moment,
+or who has quietly built the biggest pile of spins. Those get names:
+
+| Title | What it takes |
+|---|---|
+| **On Fire** | best win rate over the rolling seven days |
+| **The Machine** | most matches played in those seven days |
+| **Untouchable** | best win rate on the ladder, all time |
+| **Moneybags** | the fattest wallet |
+| **Ice Cold** | worst win rate over the seven days |
+
+The weekly ones need 3 matches in the week before they'll rank you and the
+all-time one needs 6 games — a title is a claim about quality, not about who
+happened to play once. Level on win rate *and* on matches played and nobody holds
+it: joint On Fire is not a thing anyone says. Nobody is ever both On Fire and Ice
+Cold, which they otherwise would be in a week only one person qualified for.
+
+A title isn't a section on one page — it follows the player. The chip appears on
+the ladder rungs, the featured panel, the player cards, the match cards on both
+sides, the profile, the compare page, and in Slack on `/tt me`.
+[`/titles`](web/pages/titles.py) lists them all, including the ones going spare,
+and `/tt titles` says the same in the channel.
+
+**Nothing about a title is stored.** Every one is recomputed from matches and
+player records, so there's nothing to migrate, nothing to backfill, and no way
+for a title to drift out of step with the ladder it came from. What *is* stored
+is the answer, for five minutes: the weekly figures need a walk over the week's
+matches and no page should pay for that per request. Applying or undoing a match
+drops the cache in the same pipeline that writes the result, so a title never
+survives the match that took it away.
+
 **Names.** The page can't render a Slack mention, so it needs something to call
 people. Three tiers, best first:
 

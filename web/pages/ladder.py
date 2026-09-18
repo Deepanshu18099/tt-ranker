@@ -61,13 +61,16 @@ BOARDS = (("", "Ratings"), ("spins", "Spins"))
 def render(players, names, recent, week_delta, week_played, placement_games,
            channel_hint="", updated="", view="", spins=None, start_spins=0,
            circulating=None, filters=None, history=(), match_count=None,
-           log_href="", week="", board="", wallets=None):
+           log_href="", week="", board="", wallets=None, titles=None):
     """The whole page.
 
     `players` is whichever record set the view wants: singles views for the
     singles tab, doubles views for the doubles one. Ranking and rendering don't
     know the difference, which is the point of shaping a per-format record like
     an ordinary one.
+
+    `titles` is awards.by_player()'s map of who is wearing what. Pass none
+    and no chips appear — the page is still the page.
 
     `history` is recent match blobs, newest first — the one read the page makes
     beyond the players themselves. Form, per-format weekly movement and rank
@@ -107,11 +110,12 @@ def render(players, names, recent, week_delta, week_played, placement_games,
         _spins_board(spins or [], names, start_spins, circulating, wallets)
         if on_spins else "",
         "" if on_spins else _featured(ranked, placing, names, placement_games,
-                                      delta, played, form, log_href, known),
-        "" if on_spins else _board(ranked, names, delta, played, form, moves, known),
+                                      delta, played, form, log_href, known, titles),
+        "" if on_spins else _board(ranked, names, delta, played, form, moves,
+                                   known, titles),
         "" if on_spins else _placing(placing, names, placement_games),
-        _of_the_week(history, week, names, view),
-        _recent(recent, names, players, filters or {}, view),
+        _of_the_week(history, week, names, view, titles),
+        _recent(recent, names, players, filters or {}, view, titles),
     ) if part)
 
     return layout.document("RALLY — Table Tennis League", body, current="Ladder",
@@ -185,7 +189,7 @@ def _tabs(view):
 # --- the leader ------------------------------------------------------------
 
 def _featured(ranked, placing, names, placement_games, delta, played, form,
-              log_href, known=True):
+              log_href, known=True, titles=None):
     """Whoever is top, at scoreboard size. Before anyone qualifies it counts
     down to the first ranked player instead of showing an empty panel."""
     if ranked:
@@ -209,7 +213,8 @@ def _featured(ranked, placing, names, placement_games, delta, played, form,
               '<p class="eyebrow bright">#1 on the ladder</p>'
               f'<div class="featured-who">{c.avatar(uid, names, "avatar-lg")}'
               f'<span class="featured-name">{c.e(display_name(uid, names))}</span></div>'
-            + f'<div class="featured-tags">{streak}{strip}</div>'
+            + f'<div class="featured-tags">{c.titles_of(uid, titles)}'
+              f'{streak}{strip}</div>'
             + "</div>"
               '<div class="featured-rating">'
               f'<span class="value num">{player["rating"]}</span>'
@@ -240,7 +245,7 @@ def _featured(ranked, placing, names, placement_games, delta, played, form,
 
 # --- the board -------------------------------------------------------------
 
-def _board(ranked, names, delta, played, form, moves, known=True):
+def _board(ranked, names, delta, played, form, moves, known=True, titles=None):
     """The standings. `known` is False when this view has no way to work out
     weekly movement, in which case the column simply isn't there — better than
     reporting a change of zero that nobody measured."""
@@ -253,7 +258,8 @@ def _board(ranked, names, delta, played, form, moves, known=True):
             f'<span class="row-rank"><span class="pos num">{i:02d}</span>'
             f'{c.rank_move(moves.get(uid, 0))}</span>'
             f'<span class="row-who">{c.avatar(uid, names)}'
-            f'<span class="row-name">{c.e(display_name(uid, names))}</span></span>'
+            f'<span class="row-name">{c.e(display_name(uid, names))}</span>'
+            f'{c.titles_of(uid, titles, limit=1)}</span>'
             f'<span class="row-meta">{c.record(player)} &middot; '
             f'{c.games_line(player)}{c.streak_badge(player["streak"])}</span>'
             f'<span class="row-form">'
@@ -360,7 +366,7 @@ def _spins_board(spins, names, start_spins, circulating, wallets=None):
 
 # --- match of the week ------------------------------------------------------
 
-def _of_the_week(history, week, names, view=derive.OVERALL):
+def _of_the_week(history, week, names, view=derive.OVERALL, titles=None):
     """One match from this week, and the rule that picked it.
 
     `derive.match_of_week` returns nothing when the week has no matches, or
@@ -375,7 +381,8 @@ def _of_the_week(history, week, names, view=derive.OVERALL):
     return ('<section class="wrap rise">'
             '<div class="section-head"><h2>Match of the week</h2>'
             f'<p class="eyebrow bright">{c.e(reason)}</p></div>'
-            f'<div class="motw">{c.match_card(blob, names, view)}</div></section>')
+            f'<div class="motw">{c.match_card(blob, names, view, titles)}'
+            "</div></section>")
 
 
 # --- spins -----------------------------------------------------------------
@@ -383,7 +390,7 @@ def _of_the_week(history, week, names, view=derive.OVERALL):
 DAY_CHIPS = c.DAY_CHIPS   # kept as page.DAY_CHIPS for anything that imports it
 
 
-def _recent(recent, names, players, filters, view=derive.OVERALL):
+def _recent(recent, names, players, filters, view=derive.OVERALL, titles=None):
     """The match list, with the player and day filters above it.
 
     `filters` is {"player": uid, "day": what was asked for, "label": how to say
@@ -408,7 +415,7 @@ def _recent(recent, names, players, filters, view=derive.OVERALL):
         heading = "Matches &middot; " + " &middot; ".join(bits)
 
     shown = recent[:FILTERED_SHOWN if filtered else RECENT_SHOWN]
-    cards = "".join(c.match_card(blob, names, view) for blob in shown)
+    cards = "".join(c.match_card(blob, names, view, titles) for blob in shown)
 
     if not recent:
         cards = c.empty_state(

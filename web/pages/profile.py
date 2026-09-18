@@ -17,7 +17,7 @@ RIVALS_SHOWN = 6
 
 def render(uid, player, players, names, history=(), week="", view="",
            placement_games=4, rank=None, delta=0, played=0, known=True,
-           versus="", log_href="", channel_hint="", updated=""):
+           versus="", log_href="", channel_hint="", updated="", titles=None):
     name = c.display_name(uid, names)
     games = elo.games_played(player)
     form = derive.form(history, view, limit=FORM_SHOWN).get(uid, "")
@@ -26,18 +26,20 @@ def render(uid, player, players, names, history=(), week="", view="",
             and derive.in_view(b, view)]
 
     body = [_header(uid, player, names, rank, delta, played, known, view,
-                    placement_games, games)]
+                    placement_games, games, titles)]
     body.append(_figures(player, games, form))
     body.append(_chart(history, uid, view))
     body.append(_versus(uid, mine, names, view, versus))
-    body.append(_matches(mine, names, view))
+    body.append(_matches(mine, names, view, titles))
     return layout.document(f"{name} — RALLY", "".join(part for part in body if part),
                            current="Players", log_href=log_href,
                            channel_hint=channel_hint, updated=updated)
 
 
 def _header(uid, player, names, rank, delta, played, known, view,
-            placement_games, games):
+            placement_games, games, titles=None):
+    worn = "".join(c.title_chip(key, long=True)
+                   for key in (titles or {}).get(uid, []))
     place = (f'<span class="hash num">#{rank:02d}</span>' if rank
              else '<span class="hash num is-placing">&mdash;</span>')
     standing = (f"#{rank} on the {_format_name(view).lower()} ladder" if rank
@@ -50,7 +52,8 @@ def _header(uid, player, names, rank, delta, played, known, view,
         f'<p class="eyebrow bright">{c.e(standing)}</p>'
         f'<div class="featured-who">{c.avatar(uid, names, "avatar-lg")}'
         f'<h1 class="featured-name">{c.e(c.display_name(uid, names))}</h1></div>'
-        f'{_tabs(uid, view)}'
+        + (f'<div class="profile-titles">{worn}</div>' if worn else "")
+        + f'{_tabs(uid, view)}'
         f'<p class="profile-actions"><a class="btn" href="{c.e(_compare_href(uid, view))}">'
         f'{icons.swap()}Compare</a></p>'
         "</div>"
@@ -128,13 +131,13 @@ def _versus(uid, mine, names, view, versus):
                      classes="rise-3")
 
 
-def _matches(mine, names, view=derive.OVERALL):
+def _matches(mine, names, view=derive.OVERALL, titles=None):
     if not mine:
         return c.section("Matches", c.empty_state(
             "No matches yet", "Their first rally is waiting."))
     return c.section("Matches",
                      '<div class="matches">'
-                     + "".join(c.match_card(b, names, view)
+                     + "".join(c.match_card(b, names, view, titles)
                                 for b in mine[:MATCHES_SHOWN])
                      + "</div>",
                      eyebrow=f"last {min(len(mine), MATCHES_SHOWN)}")

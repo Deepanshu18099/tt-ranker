@@ -55,6 +55,7 @@ SUBCOMMANDS = {
     "bet": "bet", "stake": "bet", "back": "bet",
     "wallet": "wallet", "balance": "wallet", "spins": "wallet", "purse": "wallet",
     "rich": "rich", "richest": "rich", "wallets": "rich", "moneyboard": "rich",
+    "titles": "titles", "title": "titles", "badges": "titles", "awards": "titles",
     "book": "book", "bets": "book", "fixtures": "book", "upcoming": "book",
     "transfer": "transfer", "pay": "transfer", "send": "transfer", "give": "transfer",
     # `form` and a bare `log` both open the guided modal.

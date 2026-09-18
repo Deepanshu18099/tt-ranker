@@ -13,6 +13,8 @@ hold throughout:
 """
 import html
 
+import awards
+
 from . import derive, icons, tokens
 
 UP, DOWN, LEVEL = "&#9650;", "&#9660;", "&#8212;"
@@ -109,6 +111,36 @@ def streak_badge(streak, long=False):
     return ""
 
 
+# --- titles -----------------------------------------------------------------
+
+def title_chip(key, long=False):
+    """One title, worn beside a name.
+
+    Every chip carries its own glyph and its own word, so it never depends on
+    the colour behind it — the rule the whole page is built on. `title` is the
+    tooltip, because a badge reading "The Machine" should be able to say what
+    it took to earn it without a trip to another page.
+    """
+    title = awards.BY_KEY.get(key)
+    if not title:
+        return ""
+    glyph = getattr(icons, title.icon, None)
+    return (f'<span class="title-chip {e(title.tone)}" title="{e(title.blurb)}">'
+            + (glyph() if glyph else "")
+            + f'<span>{e(title.name)}</span>'
+            + (f'<span class="title-why">{e(title.blurb)}</span>' if long else "")
+            + "</span>")
+
+
+def titles_of(uid, titles, limit=None):
+    """The chips one player wears. `titles` is awards.by_player()'s map, so a
+    page that was handed no titles renders nothing rather than breaking."""
+    held = (titles or {}).get(uid) or []
+    if limit:
+        held = held[:limit]
+    return "".join(title_chip(key) for key in held)
+
+
 def record(player):
     """4-0-1 — wins, losses, and draws only when there are any."""
     wins, losses, draws = player["wins"], player["losses"], player["draws"]
@@ -146,7 +178,7 @@ def empty_state(title, body, cta_text="", cta_href="", cta_icon=True):
     return (f'<div class="empty"><h3>{e(title)}</h3><p>{e(body)}</p>{button}</div>')
 
 
-def match_card(blob, names, view=derive.OVERALL):
+def match_card(blob, names, view=derive.OVERALL, titles=None):
     """One played session: who, the score in games, the rating it moved, and
     every individual game underneath.
 
@@ -168,6 +200,7 @@ def match_card(blob, names, view=derive.OVERALL):
         people = "".join(
             f'{avatar(uid, names, "avatar-sm")}'
             f'<span class="side-name">{e(display_name(uid, names))}</span>'
+            + titles_of(uid, titles, limit=1)
             for uid in uids)
         moved = " · ".join(
             f'<span class="side-delta {_dir(deltas.get(uid, 0))}">'
@@ -251,20 +284,22 @@ def section(title, body, eyebrow="", note="", classes=""):
 # --- players ----------------------------------------------------------------
 
 def player_card(uid, player, names, rank=None, movement="", form="", href="",
-                pickable=False, picked=False):
+                pickable=False, picked=False, titles=None):
     """One player, as a card — the unit the players page is a grid of.
 
     While comparing, the card stops being a link and becomes something to
     choose: same card, one job swapped for another, so the grid never turns
     into a second set of controls.
     """
+    worn = titles_of(uid, titles)
     place = f'<span class="pc-rank num">#{rank:02d}</span>' if rank else \
         '<span class="pc-rank pc-placing">Placing</span>'
     body = (
         f'<div class="pc-top">{place}{streak_badge(player["streak"])}</div>'
         f'<div class="pc-who">{avatar(uid, names, "avatar-lg")}'
         f'<span class="pc-name">{e(display_name(uid, names))}</span></div>'
-        f'<div class="pc-rating"><span class="num">{player["rating"]}</span>{movement}</div>'
+        + (f'<div class="pc-titles">{worn}</div>' if worn else "")
+        + f'<div class="pc-rating"><span class="num">{player["rating"]}</span>{movement}</div>'
         f'<div class="pc-meta"><span>{record(player)}</span>'
         f'<span>{games_line(player)}</span></div>'
         + (f'<div class="pc-form">{form_strip(form, label=False)}</div>' if form else ""))
