@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 
 import elo
 import kv
+import parsing
 import store
 
 CURRENCY = "spins"
@@ -280,6 +281,41 @@ def close_if_due(record, now=None):
         save(record)
         return True
     return False
+
+
+def reschedule(record, when, by="", now=None):
+    """Move a fixture's start time. Returns (ok, message).
+
+    Plans change, and the alternative people were using was calling the match
+    off and putting it up again — which hands every stake back and loses the
+    pool. Moving the time keeps the bets, because the bet was on who wins, not
+    on when they played.
+
+    **A window that has already shut stays shut.** If the old start time has
+    passed, the match may have begun, and anyone who watched two games knows
+    something the pool does not. Reopening betting on the strength of a
+    postponement is the one way this could be used to steal spins, so a closed
+    fixture moves its time and keeps its pool frozen. An open one stays open.
+    """
+    now = now or store.now_ist()
+    state = record.get("state")
+    if state not in ("open", "closed"):
+        return False, f"That fixture is already {state or 'gone'}."
+    if when <= now:
+        return False, "That time has already gone by."
+    if when - now > timedelta(days=parsing.MAX_LEAD_DAYS):
+        return False, (f"That's more than {parsing.MAX_LEAD_DAYS} days out — "
+                       "put it up nearer the time.")
+    was = starts_at(record)
+    if was and abs((when - was).total_seconds()) < 60:
+        return False, "That's when it was already set for."
+
+    record["starts_at"] = store.stamp(when)
+    record["moved_at"] = store.stamp(now)
+    record["moved_by"] = by or ""
+    record["moves"] = int(record.get("moves", 0)) + 1
+    save(record)
+    return True, ""
 
 
 def is_abandoned(record, now=None, hours=ABANDON_HOURS):

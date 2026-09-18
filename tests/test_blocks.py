@@ -225,3 +225,29 @@ def test_a_correction_that_moves_the_whole_ladder_still_fits_a_section():
     assert "and 287 more" in effect          # 299 moved, 12 shown
     check_blocks([{"type": "section", "text": {"type": "mrkdwn", "text": effect}}],
                  "_edit_effect(wide)")
+
+
+# --- moving a fixture ------------------------------------------------------
+
+def test_the_reschedule_form_is_a_valid_view(fake):
+    record = betting.schedule([A], [B], store.now_ist() + timedelta(hours=1),
+                              created_by=A, channel="C1")
+    check_view(bot.build_reschedule_modal(record), "build_reschedule_modal")
+
+
+def test_the_reschedule_form_is_valid_with_a_pot_on_it(fake):
+    record = betting.schedule([A], [B], store.now_ist() + timedelta(hours=1),
+                              created_by=A, channel="C1")
+    betting.place_bet(record, C, "a", 4000)
+    check_view(bot.build_reschedule_modal(record), "build_reschedule_modal(staked)")
+
+
+def test_a_moved_fixture_message_is_valid_at_every_stage(fake):
+    now = store.now_ist()
+    record = betting.schedule([A, B], [C, D], now + timedelta(minutes=10),
+                              created_by=A, channel="C1", now=now)
+    betting.reschedule(record, now + timedelta(hours=4), by=A, now=now)
+    check_blocks(bot.fixture_blocks(record, now), "fixture_blocks(moved, open)")
+    betting.close_if_due(record, now + timedelta(hours=5))
+    check_blocks(bot.fixture_blocks(record, now + timedelta(hours=5)),
+                 "fixture_blocks(moved, closed)")

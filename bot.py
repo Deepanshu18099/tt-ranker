@@ -1540,6 +1540,8 @@ results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 • `/tt who ChumChum` — who is that? · `/tt who @someone` — what are they called?\n• `/tt intro` — post the how-it-works message, for pinning
 • `/tt wallet` — your spins    • `/tt rich` — the spins leaderboard
 • `/tt titles` — who holds what
+• `/tt reschedule 6 7pm` — running late? move a fixture and keep every stake \
+_(or press *Move it* on it)_
 • `/tt edit 33 21-19 …` — correct a logged match _(admins; `swap` if the sides \
 went in backwards, `void` to throw it out)_
 
@@ -1638,6 +1640,8 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_nudge(command, respond, client, logger=logger)
         elif sub == "schedule":
             handle_schedule(command, respond, client, bot_id, logger=logger)
+        elif sub == "reschedule":
+            handle_reschedule(command, respond, client, logger=logger)
         elif sub == "bet":
             handle_bet(command, respond, client, bot_id, logger=logger)
         elif sub == "wallet":
@@ -1687,6 +1691,8 @@ def build_app(process_before_response=False, token_verification=True):
     for action in BET_ACTIONS:
         app.action(action)(_wrap_action(handle_bet_button))
     app.action(CANCEL_FIXTURE_ACTION)(_wrap_action(handle_cancel_fixture))
+    app.action(RESCHEDULE_ACTION)(_wrap_action(handle_reschedule_button))
+    app.view(RESCHEDULE_MODAL)(handle_reschedule_modal)
     app.view(BET_MODAL)(handle_bet_modal)
     app.event("member_joined_channel")(handle_member_joined)
     return app
@@ -1718,6 +1724,8 @@ BET_ACTION_B = "tt_bet_b"
 BET_ACTIONS = (BET_ACTION_A, BET_ACTION_B)
 BET_MODAL = "tt_bet_modal"
 CANCEL_FIXTURE_ACTION = "tt_fixture_cancel"
+RESCHEDULE_ACTION = "tt_fixture_move"
+RESCHEDULE_MODAL = "tt_reschedule_modal"
 
 
 def fmt_spins(n):
@@ -1759,6 +1767,13 @@ def fixture_blocks(record, now=None):
     blocks = [_section(head)]
     if record.get("note"):
         blocks.append(_context(record["note"]))
+    if record.get("moves"):
+        # Said on the message rather than only in the channel note: somebody
+        # who staked on Tuesday and comes back to it should see that the time
+        # changed without having to scroll for the announcement.
+        times = "" if int(record["moves"]) == 1 else f" ({record['moves']} times)"
+        by = f" by <@{record['moved_by']}>" if record.get("moved_by") else ""
+        blocks.append(_context(f":clock3: Moved{by}{times}. Stakes stand."))
 
     if state in ("open", "closed"):
         blocks.append(_section(pool_line(record, pot)))
@@ -1768,13 +1783,22 @@ def fixture_blocks(record, now=None):
             who = ", ".join(f"<@{u}> ({fmt_spins(n)})" for u, n in against)
             blocks.append(_context(f":eyes: Backing the other side of their own "
                                    f"match: {who}"))
-    if state == "open":
-        blocks.append({"type": "actions", "block_id": f"tt_fixture_{sid}", "elements": [
-            _button(BET_ACTION_A, f"Back {plain_side(record['side_a'])}", f"{sid}:a",
-                    style="primary"),
-            _button(BET_ACTION_B, f"Back {plain_side(record['side_b'])}", f"{sid}:b"),
-            _button(CANCEL_FIXTURE_ACTION, "Call it off", sid),
-        ]})
+    if state in ("open", "closed"):
+        elements = []
+        if state == "open":
+            elements += [
+                _button(BET_ACTION_A, f"Back {plain_side(record['side_a'])}",
+                        f"{sid}:a", style="primary"),
+                _button(BET_ACTION_B, f"Back {plain_side(record['side_b'])}",
+                        f"{sid}:b"),
+            ]
+        # Offered on a closed fixture as well: "we're running late" happens
+        # exactly when the window has already shut, and calling it off to put
+        # the same match up again hands every stake back.
+        elements.append(_button(RESCHEDULE_ACTION, "Move it", sid))
+        elements.append(_button(CANCEL_FIXTURE_ACTION, "Call it off", sid))
+        blocks.append({"type": "actions", "block_id": f"tt_fixture_{sid}",
+                       "elements": elements})
     blocks.append(_context(f"Fixture `#{sid}` · set up by <@{record['created_by']}> · "
                            f"`/tt bet {sid} a 50` also works"))
     return blocks
@@ -2120,6 +2144,164 @@ def handle_cancel_fixture(body, client, respond, logger=None):
                  + (f" {fmt_spins(refunded)} refunded." if refunded else "")),
     ]
     _refresh_with(record, client, blocks, "Fixture called off.", logger=logger)
+
+
+def may_move(record, user):
+    """The players, whoever set it up, or an admin — the same people who may
+    call it off. Moving a match is the smaller version of that decision."""
+    allowed = set(record["side_a"] + record["side_b"] + [record["created_by"]])
+    return user in allowed or is_admin(user)
+
+
+def apply_reschedule(sid, when, user, client, now=None, logger=None):
+    """Move a fixture and tell everyone. Returns a message for the caller, or
+    None if it worked. Shared by the typed command and the modal."""
+    now = now or store.now_ist()
+    record = betting.get(sid)
+    if not record:
+        return ":information_source: There's no fixture by that number."
+    if not may_move(record, user):
+        return (":lock: Only the players or whoever set it up can move that one.")
+    was = betting.starts_at(record)
+    ok, why = betting.reschedule(record, when, by=user, now=now)
+    if not ok:
+        return f":warning: {why}"
+
+    _refresh_with(record, client, fixture_blocks(record, now),
+                  f"{plain_side(record['side_a'])} vs {plain_side(record['side_b'])}, "
+                  f"{fmt_when(record, now)}.", logger=logger)
+    # Also said out loud. Editing a message people scrolled past days ago is not
+    # telling them — and they have money on it.
+    note = (f":clock3: <@{user}> moved *{fmt_side(record['side_a'])} vs "
+            f"{fmt_side(record['side_b'])}* to *{fmt_when(record, now)}*"
+            + (f" (was {fmt_when({'starts_at': store.stamp(was)}, now)})" if was else "")
+            + ".")
+    pot = betting.pool(sid)["total"]
+    if pot:
+        note += (f" {fmt_spins(pot)} already staked — stakes stand, nobody is "
+                 "refunded.")
+    if record.get("state") == "closed":
+        note += (" Betting stays shut: the window closed when it was first due, "
+                 "and a postponement shouldn't reopen it.")
+    _announce_fixture(record, client, note, logger=logger)
+    return None
+
+
+def _announce_fixture(record, client, text, logger=None):
+    """A short note in the fixture's own channel, threaded under it when we know
+    where it lives so it doesn't shout twice."""
+    channel = record.get("channel")
+    if not (client and channel):
+        return
+    try:
+        client.chat_postMessage(channel=channel, text=text,
+                                thread_ts=record.get("ts") or None,
+                                reply_broadcast=bool(record.get("ts")))
+    except Exception as e:
+        (logger or log).warning("could not announce fixture %s: %s",
+                                record.get("id"), e)
+
+
+def handle_reschedule(command, respond, client=None, logger=None):
+    """`/tt reschedule 6 7pm`. Bare, it says which fixtures you could move."""
+    caller = command["user_id"]
+    _, rest = parsing.split_subcommand(command.get("text", ""))
+    now = store.now_ist()
+    if not rest.strip():
+        mine = [r for r in betting.live() if may_move(r, caller)]
+        if not mine:
+            respond(":grey_question: You've no fixtures to move. "
+                    "`/tt schedule @bob 6pm` puts one up.")
+            return
+        lines = [f"`#{r['id']}`  {fmt_side(r['side_a'])} vs {fmt_side(r['side_b'])}"
+                 f"  ·  {fmt_when(r, now)}" for r in mine]
+        respond(":clock3: *Move which one?*  `/tt reschedule "
+                f"{mine[0]['id']} 7pm`\n" + "\n".join(lines))
+        return
+    try:
+        sid, when = parsing.parse_reschedule(rest, now)
+    except parsing.ParseError as e:
+        respond(f":warning: {e}")
+        return
+    error = apply_reschedule(sid, when, caller, client, now, logger)
+    if error:
+        respond(error)
+    else:
+        respond(f":white_check_mark: Moved `#{sid}`.")
+
+
+def build_reschedule_modal(record, now=None):
+    """Just the time — moving a fixture is moving *this* match, and changing who
+    is playing would make it a different one with the same pot on it."""
+    now = now or store.now_ist()
+    when = betting.starts_at(record) or _default_start(now)
+    sid = record["id"]
+    staked = betting.pool(sid)["total"]
+    context = (f"{plain_side(record['side_a'])} vs {plain_side(record['side_b'])}"
+               f" · currently {fmt_when(record, now)}")
+    if staked:
+        context += f" · {staked:,} {betting.CURRENCY} staked, which stands"
+    blocks = [
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": context}]},
+        {"type": "input", "block_id": "when",
+         "label": {"type": "plain_text", "text": "New start time"},
+         "hint": {"type": "plain_text",
+                  "text": "Everyone who backed it keeps their stake."},
+         "element": {"type": "datetimepicker", "action_id": "v",
+                     "initial_date_time": int(max(when, _default_start(now)).timestamp())}},
+    ]
+    return {
+        "type": "modal",
+        "callback_id": RESCHEDULE_MODAL,
+        "private_metadata": str(sid),
+        "title": {"type": "plain_text", "text": "Move a match"},
+        "submit": {"type": "plain_text", "text": "Move it"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": blocks,
+    }
+
+
+def handle_reschedule_button(body, client, respond, logger=None):
+    sid = _action_value(body)
+    record = betting.get(sid)
+    if not record:
+        _only_you(respond, ":information_source: That fixture has gone.")
+        return
+    user = body["user"]["id"]
+    if not may_move(record, user):
+        _only_you(respond, ":lock: Only the players or whoever set it up can "
+                           "move that one.")
+        return
+    try:
+        client.views_open(trigger_id=body["trigger_id"],
+                          view=build_reschedule_modal(record))
+    except Exception as e:
+        (logger or log).warning("reschedule modal failed: %s", e)
+        _only_you(respond, ":warning: Couldn't open the form — type it instead: "
+                           f"`/tt reschedule {sid} 7pm`")
+
+
+def handle_reschedule_modal(ack, body, view, client=None, logger=None):
+    sid = view.get("private_metadata") or ""
+    epoch = _modal_value(view["state"]["values"], "when", "selected_date_time")
+    now = store.now_ist()
+    if not epoch:
+        ack(response_action="errors", errors={"when": "Pick when it starts."})
+        return
+    when = datetime.fromtimestamp(int(epoch), tz=store.IST)
+    if when <= now:
+        ack(response_action="errors",
+            errors={"when": "That's already past — pick a time still to come."})
+        return
+    if when - now > timedelta(days=parsing.MAX_LEAD_DAYS):
+        ack(response_action="errors",
+            errors={"when": f"More than {parsing.MAX_LEAD_DAYS} days out."})
+        return
+    ack()
+    user = body["user"]["id"]
+    error = apply_reschedule(sid, when, user, client, now, logger)
+    if error:
+        _dm(client, user, error, logger=logger)
 
 
 def _refresh_with(record, client, blocks, text, logger=None):

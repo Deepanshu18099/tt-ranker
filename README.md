@@ -59,6 +59,7 @@ Everything is one slash command, `/tt`.
 | `/tt intro` · `/tt intro clear` | Post the how-it-works message · take it down |
 | **`/tt schedule`** · shortcuts menu → *Schedule a table tennis match* | **Opens a form — pick the players and a start time** |
 | `/tt schedule @bob 6pm` | Or type it — `in 30m`, `6pm`, `6:30pm` and `18:30` all work |
+| `/tt reschedule 6 7pm` | Move a fixture — **Move it** on the message does the same |
 | `/tt book` · `/tt book 6` | Open fixtures · one in full, with every stake |
 | `/tt wallet` | Your spins and recent moves |
 | `/tt transfer @bob 500` | Admins only — move spins between wallets |
@@ -994,6 +995,32 @@ handing out a prize is giving away their own spins, not printing new ones.
 
 Everyone whose balance moved is DM'd, and a move made by a third party says so
 in both ledgers — `/tt wallet` can always answer *where did that come from*.
+
+### Running late
+
+`/tt reschedule 6 7pm`, or press **Move it** on the fixture. The players,
+whoever set it up, and admins can all do it — the same people who can call it
+off.
+
+**Every stake stands.** The bet was on who wins, not on when they played, so
+moving the time keeps the pool. Before this the only way to shift a match was to
+call it off and put it up again, which hands all the money back and loses the
+betting the fixture had already attracted.
+
+**A window that has already shut stays shut.** If the original start time has
+passed, the match may have begun — and someone who watched two games of it knows
+something the pool doesn't. Reopening betting on the strength of a postponement
+is the one way this could be used to steal spins, so a closed fixture moves its
+time and keeps its pool frozen at whatever was in it. An open one stays open and
+keeps taking bets until the *new* start time. The channel is told which of the
+two happened, rather than left to work it out.
+
+A moved fixture is also abandoned from its **new** time, so the daily sweep
+can't refund a match that has been postponed into the future because the old
+time was long enough ago.
+
+Changing *who is playing* isn't offered. That's a different match with the same
+pot sitting on it — call it off and put the right one up.
 
 ### Betting on your own match
 

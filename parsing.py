@@ -52,6 +52,8 @@ SUBCOMMANDS = {
     "nudge": "nudge", "askall": "nudge",
     "schedule": "schedule", "sched": "schedule", "fixture": "schedule",
     "challenge": "schedule",
+    "reschedule": "reschedule", "move": "reschedule", "postpone": "reschedule",
+    "delay": "reschedule", "resched": "reschedule",
     "bet": "bet", "stake": "bet", "back": "bet",
     "wallet": "wallet", "balance": "wallet", "spins": "wallet", "purse": "wallet",
     "rich": "rich", "richest": "rich", "wallets": "rich", "moneyboard": "rich",
@@ -464,3 +466,35 @@ def parse_edit(text, bot_id=None):
         raise ParseError("Nothing to change. Add the corrected scores, or "
                          "`swap` to turn the sides around, or `void`.")
     return mid, games, swap, void
+
+
+# --- moving a scheduled match ----------------------------------------------
+
+def parse_reschedule(text, now=None):
+    """`6 7pm` → (fixture id, when), for `/tt reschedule`.
+
+    The id comes first for the same reason it does in `/tt edit`: `18:30` read
+    as an id and `18` read as a time are both plausible, and only the position
+    tells them apart.
+    """
+    text = (text or "").strip()
+    if not text:
+        raise ParseError(
+            "Which fixture, and when? `/tt reschedule 6 7pm`. The number is on "
+            "the fixture message — `Fixture #6`.")
+    head, _, rest = text.replace("#", " #").strip().partition(" ")
+    found = MATCH_ID_RE.match(head.strip())
+    if not found:
+        raise ParseError(f"`{head}` isn't a fixture number. It's the `#6` on the "
+                         "fixture message, and it comes first.")
+    when, matched = parse_when(rest, now)
+    if when is None:
+        raise ParseError(
+            f"I couldn't read `{rest.strip() or '(nothing)'}` as a time. "
+            "Try `in 30m`, `6pm`, `6:30pm` or `18:30`.")
+    if when <= now:
+        raise ParseError("That's already past. Try `in 30m`, `6pm`, or `18:30`.")
+    if when - now > timedelta(days=MAX_LEAD_DAYS):
+        raise ParseError(f"That's more than {MAX_LEAD_DAYS} days out — "
+                         "move it nearer the time.")
+    return found.group(1), when
