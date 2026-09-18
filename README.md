@@ -711,6 +711,25 @@ and they are plain links and a form — no script needed for them to work. The
 same filters are in Slack: `/tt history @bob today`, `/tt history week`,
 `/tt history 2026-09-16`. Days are read in IST, like everything else here.
 
+**Whose league it is.** The VMock mark leads the bar, ahead of RALLY's own
+wordmark, so a stranger opening the link can tell in one look that this is ours.
+
+It is the only image on the site, and it is served from `/mark.png` rather than
+inlined. Both would keep the page off the network in the sense that matters — no
+CDN, no font, nothing third-party, nothing blocking first paint — but 3 KB of
+base64 would ride along on every page of every request, and it would sit *inside*
+the document, where a blob of base64 quietly contains almost any short string a
+test asks about. So the bytes are served once, cached immutably, and the document
+carries a nine-character path. The favicon goes out the same way, at
+`/favicon.ico`, which browsers ask for on their own — which is how the document
+still contains no `<link>` at all.
+
+The asset is the official logo cropped to the badge, at 56px for a 28px slot. It
+is a PNG because the official SVG is 100 KB with a raster embedded in it: the
+texture inside that badge has no vector we have. See
+[web/brand.py](web/brand.py) — if Brand ever hands over a true vector, that
+module is the only thing that changes.
+
 **Names.** The page can't render a Slack mention, so it needs something to call
 people. Three tiers, best first:
 

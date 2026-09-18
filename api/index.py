@@ -478,6 +478,16 @@ def route(subpath):
     if tail.endswith("/debug"):
         return _debug_payload(tail)
 
+    # The mark, and the favicon browsers ask for without being told to. Served
+    # before the page lookup and before any database check: an image has no
+    # business 503-ing because the KV credentials are missing.
+    from web import brand
+    found = brand.asset(tail)
+    if found:
+        body, content_type = found
+        return body, 200, {"Content-Type": content_type,
+                           "Cache-Control": brand.CACHE}
+
     page_view = _page_for(tail)
     if page_view:
         import kv
