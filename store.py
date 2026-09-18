@@ -359,8 +359,12 @@ def apply_match(record, confirmed_by=None, auto=False, admin=False, now=None):
                  "games": elo.games_played(split_view(players[u], split_prefix))}
                 for u in side]
 
+    # The doubles ladder rates a doubles result at close to its face value:
+    # it is a ladder of how people play in pairs, so the result is the whole of
+    # the evidence rather than half of it. The overall rating still halves it.
     split = elo.rate_match(split_entries(side_a), split_entries(side_b),
-                           record["games"])
+                           record["games"],
+                           doubles_factor=elo.DOUBLES_OWN_K_FACTOR)
 
     writes = []
     for side, mine, theirs in ((side_a, "a", "b"), (side_b, "b", "a")):

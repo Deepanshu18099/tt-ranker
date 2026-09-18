@@ -156,17 +156,75 @@ def test_scraping_past_someone_far_below_you_can_cost_rating():
     assert gain(P("a", 1400), P("b", 1000), CLOSE_WIN) < 0
 
 
-def test_provisional_players_move_faster():
+def test_a_newcomer_moves_far_further_than_a_veteran():
     new = gain(P("a", games=0), P("b", games=0), NORMAL)
     old = gain(P("a", games=500), P("b", games=500), NORMAL)
-    assert new > old > 0
-    assert elo.k_factor(0) == elo.K_PROVISIONAL
-    assert elo.k_factor(elo.PROVISIONAL_GAMES) == elo.K_ESTABLISHED
+    assert new > 3 * old > 0
+    assert elo.k_factor(0) == elo.K_NEW
+    assert elo.k_factor(10_000) == pytest.approx(elo.K_SETTLED)
 
 
-def test_the_provisional_period_is_counted_in_games():
+def test_k_falls_smoothly_and_never_steps():
+    """The old rule dropped from 16 to 11 the moment a player's 50th game
+    landed, so game 49 moved them 45% further than game 51 for no reason they
+    could see. Nothing here may jump."""
+    ks = [elo.k_factor(n) for n in range(0, 120)]
+    assert ks == sorted(ks, reverse=True)
+    steps = [a - b for a, b in zip(ks, ks[1:])]
+    # No single game may account for more than a tenth of the whole journey.
+    assert max(steps) < (elo.K_NEW - elo.K_SETTLED) / 10
+    assert all(step > 0 for step in steps)       # and it is always falling
+
+
+def test_the_first_games_are_the_ones_that_move():
+    """What the whole change is for: a newcomer's opening 1000 is a guess, and
+    their first games have to be able to replace it."""
+    assert elo.k_factor(0) / elo.k_factor(100) > 3.5
+    # Half the journey from new to settled is done inside the first ten games.
+    halfway = (elo.K_NEW + elo.K_SETTLED) / 2
+    assert elo.k_factor(5) > halfway > elo.k_factor(10)
+
+
+def test_the_calibration_period_is_counted_in_games():
     assert elo.games_played({"games_won": 12, "games_lost": 9}) == 21
     assert elo.games_played({}) == 0
+
+
+def test_a_session_is_rated_at_the_k_of_its_middle_game():
+    """One K for the session, being the mean of the K each of its games would
+    have carried — so a newcomer's long first evening converges instead of
+    overshooting on the K of game one."""
+    k = elo.session_k(0, 10)
+    assert elo.k_factor(9) < k < elo.k_factor(0)
+    assert k == pytest.approx(sum(elo.k_factor(n) for n in range(10)) / 10)
+    # A single game is just that game's K.
+    assert elo.session_k(4, 1) == elo.k_factor(4)
+
+
+def test_a_long_first_session_does_not_overshoot():
+    """Ten games at game-one's K would move a newcomer about a third further
+    than the curve says they have earned."""
+    ten = [(11, 6)] * 10
+    damped = gain(P("a", games=0), P("b", games=200), ten)
+    if_k_never_fell = damped * elo.k_factor(0) / elo.session_k(0, 10)
+    assert damped < if_k_never_fell * 0.8
+
+
+def test_the_order_games_were_typed_in_changes_nothing():
+    """K is per session and E is fixed for it, so a 2-1 is a 2-1 however it is
+    written down."""
+    one = gain(P("a", games=3), P("b", games=3), [(11, 7), (9, 11), (11, 5)])
+    two = gain(P("a", games=3), P("b", games=3), [(9, 11), (11, 5), (11, 7)])
+    assert one == two
+
+
+def test_an_even_session_still_moves_nobody_however_new_they_are():
+    """The property a per-game K would have quietly broken: the wins would have
+    been worth more than the losses purely for being typed first."""
+    for games in (0, 3, 40, 300):
+        r = rate(P("a", games=games), P("b", games=0),
+                 [(11, 7), (7, 11), (11, 9), (9, 11)])
+        assert r["deltas"]["a"] == 0 and r["deltas"]["b"] == 0
 
 
 def test_rating_never_falls_through_the_floor():
@@ -193,6 +251,26 @@ def test_a_doubles_result_moves_all_four_players():
 def test_doubles_conserves_the_rating_pool():
     r = rate([P("a1", 1200), P("a2", 900)], [P("b1", 1030), P("b2", 1010)], CLOSE_WIN)
     assert sum(r["deltas"].values()) == 0
+
+
+def test_the_doubles_ladder_rates_a_doubles_result_at_nearly_full_weight():
+    """Half-weight is right for your overall rating — half of a doubles result
+    is your partner. It is wrong for the doubles ladder, where the result is the
+    whole of the evidence about how you play in pairs."""
+    pair = ([P("a1"), P("a2")], [P("b1"), P("b2")])
+    overall = elo.rate_match(*pair, SWEEP)["deltas"]["a1"]
+    own = elo.rate_match(*pair, SWEEP,
+                         doubles_factor=elo.DOUBLES_OWN_K_FACTOR)["deltas"]["a1"]
+    assert own > overall > 0
+    assert elo.DOUBLES_K_FACTOR < elo.DOUBLES_OWN_K_FACTOR < 1
+
+
+def test_a_doubles_result_still_counts_for_less_than_a_singles_one():
+    """Even on its own ladder: you did not pick your partner."""
+    doubles = elo.rate_match([P("a1"), P("a2")], [P("b1"), P("b2")], SWEEP,
+                             doubles_factor=elo.DOUBLES_OWN_K_FACTOR)
+    singles = rate(P("a1"), P("b1"), SWEEP)
+    assert doubles["deltas"]["a1"] < singles["deltas"]["a1"]
 
 
 def test_doubles_counts_for_less_than_singles():
