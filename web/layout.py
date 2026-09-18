@@ -14,6 +14,7 @@ NAV_ITEMS = (
     ("Ladder", "/ladder", True),
     ("Matches", "/matches", True),
     ("Players", "/players", True),
+    ("Titles", "/titles", True),
     ("Stats", "/stats", True),
 )
 

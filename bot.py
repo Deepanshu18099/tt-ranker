@@ -31,6 +31,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
 log = logging.getLogger("tt-ranker")
 
+import awards
 import betting
 import elo
 import kv
@@ -1150,6 +1151,10 @@ def handle_me(command, respond, bot_id=None):
                      f"{doubles_games} game{'s' if doubles_games != 1 else ''}"
                      + ("" if doubles_games >= DOUBLES_PLACEMENT_GAMES
                         else "  _(not yet on the doubles board)_"))
+    worn = [awards.BY_KEY[key].name
+            for key in awards.by_player(awards.current()).get(uid, [])]
+    if worn:
+        lines.append(":military_medal:  *" + "*  ·  *".join(worn) + "*")
     if played < PLACEMENT_GAMES:
         left = PLACEMENT_GAMES - played
         lines.append(f"_{left} more game{'s' if left > 1 else ''} to join the ladder._")
@@ -1534,6 +1539,7 @@ results apply on their own after {store.AUTO_CONFIRM_HOURS}h.
 • `/tt name Your Name` — how you appear on the web ladder
 • `/tt who ChumChum` — who is that? · `/tt who @someone` — what are they called?\n• `/tt intro` — post the how-it-works message, for pinning
 • `/tt wallet` — your spins    • `/tt rich` — the spins leaderboard
+• `/tt titles` — who holds what
 • `/tt edit 33 21-19 …` — correct a logged match _(admins; `swap` if the sides \
 went in backwards, `void` to throw it out)_
 
@@ -1638,6 +1644,8 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
             handle_wallet(command, respond)
         elif sub == "rich":
             handle_rich(respond)
+        elif sub == "titles":
+            handle_titles(respond)
         elif sub == "book":
             handle_book(command, respond)
         elif sub == "transfer":
@@ -2342,6 +2350,23 @@ def rich_text(ranked, limit=RICH_LIMIT, title=f"Who's rich — {betting.CURRENCY
 def handle_rich(respond):
     uids = store.player_ids()
     respond(rich_text(betting.standings(uids), circulating=betting.circulating(uids)))
+
+
+def titles_text(table, names=None):
+    """Every title and who holds it. The unheld ones are listed too — the answer
+    to "what can I win here" includes whatever is currently going spare."""
+    lines = [":military_medal: *Titles*"]
+    for title, uid in awards.holder_rows(table):
+        who = f"<@{uid}>" if uid else "_going spare_"
+        lines.append(f"*{title.name}* — {who}\n_{title.blurb}._")
+    url = ladder_url()
+    lines.append(f"\n_Worked out from the results, never stored"
+                 + (f" · {url}/titles_" if url else "_"))
+    return "\n".join(lines)
+
+
+def handle_titles(respond):
+    respond(titles_text(awards.current()))
 
 
 def handle_book(command, respond):

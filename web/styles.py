@@ -45,6 +45,32 @@ section+section{margin-top:var(--s12)}
 .hero+section{margin-top:0}   /* the hero already ends in its own padding */
 section.wrap+section.wrap:has(>.note){margin-top:var(--s4)}
 
+/* Titles: a chip worn beside a name, and the page that explains them. Each
+   carries its own glyph and its own word, so it never rests on colour — and it
+   is sized to sit inside a row without pushing the row around. */
+.title-chip{display:inline-flex;align-items:center;gap:.28rem;flex:none;
+  padding:.1rem .4rem;border:1px solid;border-radius:999px;
+  font-size:.6875rem;font-weight:700;letter-spacing:.04em;white-space:nowrap}
+.title-chip svg{width:12px;height:12px;flex:none}
+.title-chip.up{color:var(--up);background:var(--up-bg);border-color:var(--up-line)}
+.title-chip.down{color:var(--down);background:var(--down-bg);border-color:var(--down-line)}
+.title-chip.ball{color:var(--ball);background:var(--ball-bg);border-color:var(--ball-line)}
+.title-why{font-weight:400;letter-spacing:0;opacity:.8}
+.pc-titles,.profile-titles{display:flex;flex-wrap:wrap;gap:var(--s1);margin-top:var(--s2)}
+.row-who .title-chip{margin-left:var(--s2)}
+.side-name+.title-chip{margin-left:.3rem}
+.featured-tags .title-chip{font-size:.75rem;padding:.2rem .55rem}
+
+.titles{list-style:none;margin:0;padding:0;display:grid;gap:var(--s3);
+  grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+.title-card{display:flex;flex-direction:column;gap:var(--s2);padding:var(--s4);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.title-card-top{display:flex}
+.title-blurb{margin:0;color:var(--muted);font-size:.875rem;line-height:1.5}
+.title-holder{display:flex;align-items:center;gap:var(--s2);margin-top:auto;
+  padding-top:var(--s3);border-top:1px solid var(--line);font-weight:600}
+.title-holder.is-vacant{color:var(--muted);font-weight:400;font-style:italic}
+
 /* The micro-label that titles nearly every block on the page. */
 .eyebrow{margin:0;font-size:.6875rem;font-weight:700;letter-spacing:.17em;
   text-transform:uppercase;color:var(--muted)}

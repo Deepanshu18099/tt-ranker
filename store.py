@@ -35,6 +35,9 @@ PLAYERS_KEY = "tt:players"
 SEQ_KEY = "tt:seq"
 PENDING_KEY = "tt:pending"
 HISTORY_KEY = "tt:history"
+# Where awards.py parks the computed title table. Named here rather than there
+# so applying a match can drop it without store importing awards.
+TITLES_KEY = "tt:titles"
 
 HISTORY_LIMIT = 500       # what /tt history and the weekly post ever look at
 PLAYER_HISTORY_LIMIT = 50
@@ -395,6 +398,9 @@ def apply_match(record, confirmed_by=None, auto=False, admin=False, now=None):
     })
 
     writes.append(["SET", match_key(mid), json.dumps(blob)])
+    # A title is computed from results, so the result that changes hands has to
+    # take the cached answer with it.
+    writes.append(["DEL", TITLES_KEY])
     writes.append(["LPUSH", HISTORY_KEY, mid])
     writes.append(["LTRIM", HISTORY_KEY, 0, HISTORY_LIMIT - 1])
     kv.pipeline(writes)
@@ -548,7 +554,7 @@ def undo_match(blob):
         cmds.append(["HINCRBY", f"{wk}:delta", uid, -int(blob["deltas"].get(uid, 0))])
         cmds.append(["HINCRBY", f"{wk}:played", uid, -1])
     cmds.append(["LREM", HISTORY_KEY, 0, mid])
-    cmds.append(["DEL", match_key(mid)])
+    cmds.append(["DEL", match_key(mid), TITLES_KEY])
     kv.pipeline(cmds)
     return blob
 

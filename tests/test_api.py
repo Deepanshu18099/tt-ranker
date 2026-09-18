@@ -356,3 +356,30 @@ def test_a_junk_board_falls_back_to_the_ratings(app, fake):
     with patch("bot.refresh_names"):
         html = app.get("/ladder?board=%3Cscript%3E").data.decode()
     assert "<h2>Spins</h2>" not in html
+
+
+# --- titles ----------------------------------------------------------------
+
+def test_the_titles_page_is_served(app, fake):
+    import store
+    store.ensure_players(["U0AAA1", "U0BBB1"])
+    with patch("bot.refresh_names"):
+        html = app.get("/titles").data.decode()
+    assert "Titles" in html and "Going spare" in html
+
+
+def test_titles_are_in_the_bar_on_every_page(app, fake):
+    import store
+    store.ensure_players(["U0AAA1"])
+    with patch("bot.refresh_names"):
+        for path in ("/ladder", "/players", "/matches", "/stats", "/titles"):
+            assert 'href="/titles"' in app.get(path).data.decode()
+
+
+def test_a_page_renders_even_when_the_titles_lookup_fails(app, fake):
+    """The chips are a cache read on a page that has a job to do without them."""
+    with patch("bot.refresh_names"), \
+         patch("awards.current", side_effect=RuntimeError("kv is down")):
+        response = app.get("/ladder")
+    assert response.status_code == 200
+    assert b"Table Tennis League" in response.data

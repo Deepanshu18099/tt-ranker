@@ -42,7 +42,7 @@ def _value(player, label):
 
 
 def render(uids, players, names, history=(), view="", ranks=None, log_href="",
-           channel_hint="", updated="", bare=False):
+           channel_hint="", updated="", bare=False, titles=None):
     """`bare` renders the comparison without the page around it — what the
     popup on the players page fetches and shows in place."""
     uids = [uid for uid in (uids or []) if uid in players][:MAX]
@@ -50,10 +50,10 @@ def render(uids, players, names, history=(), view="", ranks=None, log_href="",
     if len(uids) < 2:
         return _pick(names, view, uids, log_href, channel_hint, updated, bare)
 
-    body = [_header(uids, players, names, ranks, bare)]
+    body = [_header(uids, players, names, ranks, bare, titles)]
     body.append(c.section("Side by side", _table(uids, players, names),
                           classes="rise-1"))
-    body.append(_versus(uids, history, names, view))
+    body.append(_versus(uids, history, names, view, titles))
     body.append(_lines(uids, history, names, view))
     if not bare:
         body.append('<section class="wrap rise">'
@@ -86,12 +86,14 @@ def _pick(names, view, chosen, log_href, channel_hint, updated, bare=False):
                            updated=updated)
 
 
-def _header(uids, players, names, ranks, bare):
+def _header(uids, players, names, ranks, bare, titles=None):
     cards = "".join(
         f'<div class="cmp-side">{c.avatar(uid, names, "avatar-lg")}'
         f'<a class="cmp-name" href="/player/{c.e(uid)}">'
         f'{c.e(c.display_name(uid, names))}</a>'
-        f'<span class="cmp-rank">'
+        + (f'<span class="cmp-titles">{c.titles_of(uid, titles)}</span>'
+           if c.titles_of(uid, titles) else "")
+        + f'<span class="cmp-rank">'
         f'{"#%02d" % ranks[uid] if ranks.get(uid) else "Still placing"}</span>'
         f'<span class="cmp-rating num">{players[uid]["rating"]}</span></div>'
         for uid in uids)
@@ -121,7 +123,7 @@ def _table(uids, players, names):
             f'<tbody>{"".join(rows)}</tbody></table></div>')
 
 
-def _versus(uids, history, names, view):
+def _versus(uids, history, names, view, titles=None):
     """Two players get their head-to-head in full; three or more get the grid,
     because six separate blocks would be a wall rather than a comparison."""
     ladder = view or derive.OVERALL
@@ -133,7 +135,8 @@ def _versus(uids, history, names, view):
                 "They haven't played",
                 "No match on record has these two on opposite sides."),
                 classes="rise-2")
-        cards = "".join(c.match_card(blob, names, ladder) for blob in h2h["recent"])
+        cards = "".join(c.match_card(blob, names, ladder, titles)
+                        for blob in h2h["recent"])
         return c.section("Between them",
                          c.head_to_head(h2h, one, two, names, view)
                          + (f'<div class="matches cmp-matches">{cards}</div>'

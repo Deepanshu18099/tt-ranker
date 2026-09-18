@@ -193,6 +193,20 @@ def _common():
             "log_href": _log_href()}
 
 
+def _titles():
+    """Who is wearing what — awards.by_player()'s map, off the cached table.
+
+    Never fatal. A page without its chips is still the page, and a title is not
+    worth a 500.
+    """
+    try:
+        import awards
+        return awards.by_player(awards.current())
+    except Exception:
+        log.exception("titles unavailable; rendering without them")
+        return {}
+
+
 def _log_href():
     """Where "Log match" goes. The page can't record a result — see
     web/pages/log.py — so it points at the page that explains how."""
@@ -244,7 +258,7 @@ def _render_matches():
         iso=parsing.iso_day(day, store.now_ist()) if day else "",
         now=store.now_ist(),
         total=store.match_count() if not (player or day or fmt or query) else None,
-        **common)
+        titles=_titles(), **common)
     return body, 200, CACHE
 
 
@@ -264,7 +278,7 @@ def _render_players():
         query=(request.args.get("q", "") or "").strip()[:40],
         comparing=request.args.get("compare") == "1",
         compare=_picked(_for_view(players, view)),
-        slots=_slots(), **common)
+        slots=_slots(), titles=_titles(), **common)
     return body, 200, CACHE
 
 
@@ -317,7 +331,7 @@ def _render_profile(uid):
     body = page_profile.render(
         uid, shown[uid], shown, history=history, week=week, view=view,
         placement_games=placement, rank=rank, delta=delta, played=played,
-        known=known, versus=versus, **common)
+        known=known, versus=versus, titles=_titles(), **common)
     return body, 200, CACHE
 
 
@@ -372,8 +386,20 @@ def _render_compare():
     # it; it is the same render either way, so the two can never disagree.
     bare = request.args.get("bare") == "1"
     body = page_compare.render(uids, shown, history=history, view=view,
-                               ranks=ranks, bare=bare, **common)
+                               ranks=ranks, bare=bare, titles=_titles(),
+                               **common)
     return body, 200, (HTML if bare else CACHE)
+
+
+def _render_titles():
+    """Every title, and who is holding it."""
+    import awards
+    from web.pages import titles as page_titles
+
+    common = _common()
+    players = common.pop("players")
+    return page_titles.render(awards.current(), players, view=_view(), **common), \
+        200, CACHE
 
 
 def _render_stats():
@@ -434,6 +460,7 @@ def _render_ladder():
         match_count=store.match_count(),
         week=store.week_key(),
         board=board,
+        titles=_titles(),
         **common,
     )
     return body, 200, CACHE
@@ -517,7 +544,7 @@ def route(subpath):
 # below asks whether this page is _render_log, and a lambda never is.
 PAGES = {"ladder": _render_ladder, "matches": _render_matches,
          "players": _render_players, "stats": _render_stats, "log": _render_log,
-         "compare": _render_compare}
+         "compare": _render_compare, "titles": _render_titles}
 
 
 def _page_for(tail):

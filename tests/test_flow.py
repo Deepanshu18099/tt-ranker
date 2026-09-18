@@ -1995,3 +1995,24 @@ def test_the_list_puts_names_first_and_collapses_the_rest(fake, client):
     assert "3 haven't set a name" in out
     for uid in (B, C, D):
         assert f"<@{uid}>" in out
+
+
+# --- titles ----------------------------------------------------------------
+
+def test_titles_lists_the_lot_held_or_not(fake, client):
+    for _ in range(3):
+        rec = store.create_pending([A], [B], [(11, 5), (11, 6)], logged_by=A)
+        store.claim_pending(rec["id"])
+        store.apply_match(rec, confirmed_by=B)
+    out = said(run("titles", client))
+    assert "On Fire" in out and f"<@{A}>" in out
+    assert "going spare" in out            # nobody has moved a wallet
+
+
+def test_the_me_card_wears_what_you_have_won(fake, client):
+    for _ in range(3):
+        rec = store.create_pending([A], [B], [(11, 5), (11, 6)], logged_by=A)
+        store.claim_pending(rec["id"])
+        store.apply_match(rec, confirmed_by=B)
+    assert "On Fire" in said(run("me", client, user=A))
+    assert "On Fire" not in said(run("me", client, user=B))
