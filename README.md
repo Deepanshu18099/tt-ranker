@@ -900,6 +900,22 @@ through one helper — so nobody's name is a dead end on one page and a link on
 the next. The format tab you're reading travels with you
 (`/player/<uid>?view=doubles`) rather than dumping you back on Singles.
 
+**Releases.** The footer of every page says which build you're looking at —
+a date and a name, linked to [`/releases`](web/pages/releases.py), which is what
+changed and when. One entry per major change, which in practice means per pull
+request; a bug fix nobody noticed doesn't get one. If a change didn't alter what
+you see or what your rating does, it isn't there.
+
+Dated rather than numbered: a version number implies a promise about
+compatibility that an office ladder doesn't make, and a date answers the question
+people actually have. The notes live in [releases.py](releases.py) as data and
+ship with the code, because the page makes no external requests and can't fetch
+them. Adding one is prepending a `Release(...)`; the footer follows the top of
+the list on its own, and a test holds the two together.
+
+It is in the footer rather than the top bar on purpose — a page you read once
+when you notice something is different, not one you check.
+
 **Names.** The page can't render a Slack mention, so it needs something to call
 people. Three tiers, best first:
 
