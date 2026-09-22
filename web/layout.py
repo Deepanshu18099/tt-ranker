@@ -4,6 +4,8 @@ Navigation is deliberately honest about what exists. Matches, Players and Stats
 are the planned pages and they appear in the bar so the shape of the product is
 legible, marked `soon` and not linked, rather than linked to a 404.
 """
+import releases
+
 from . import brand as vmock
 from . import components as c
 from . import icons, styles, tokens
@@ -379,6 +381,11 @@ def footer(log_href="", channel_hint="", updated=""):
         '<p class="footer-note"><span class="live"><span class="live-dot"></span>'
         '<span id="freshness">Updated just now</span></span>'
         f'{" &middot; " + c.e(updated) if updated else ""}</p>'
+        # Which build you are looking at, and one click to what changed in it.
+        # In the footer rather than the bar: worth being able to find, not worth
+        # a sixth thing to read past on the way to the ladder.
+        '<p class="footer-note footer-version">'
+        f'<a href="/releases">{c.e(releases.current_label())}</a></p>'
         "</div></div></footer>")
 
 

@@ -403,6 +403,17 @@ def _render_titles():
         200, CACHE
 
 
+def _render_releases():
+    """What's changed. Needs no database — the notes ship with the code."""
+    from web.pages import releases as page_releases
+
+    import store
+    return page_releases.render(
+        log_href=_log_href(),
+        channel_hint=os.environ.get("TT_CHANNEL_NAME", ""),
+        updated=store.now_ist().strftime("%H:%M IST")), 200, CACHE
+
+
 def _render_stats():
     """The numbers, over as much history as the ladder keeps."""
     import store
@@ -523,7 +534,8 @@ def route(subpath):
         from web.pages import errors
         # Every page but /log needs the database; say so once, in words, rather
         # than letting each page render an empty shell.
-        if page_view is not _render_log and not kv.kv_available():
+        if page_view not in (_render_log, _render_releases) \
+                and not kv.kv_available():
             return errors.no_database(), 503, HTML
         try:
             return page_view()
@@ -546,7 +558,8 @@ def route(subpath):
 # below asks whether this page is _render_log, and a lambda never is.
 PAGES = {"ladder": _render_ladder, "matches": _render_matches,
          "players": _render_players, "stats": _render_stats, "log": _render_log,
-         "compare": _render_compare, "titles": _render_titles}
+         "compare": _render_compare, "titles": _render_titles,
+         "releases": _render_releases}
 
 
 def _page_for(tail):
