@@ -2016,3 +2016,28 @@ def test_the_me_card_wears_what_you_have_won(fake, client):
         store.apply_match(rec, confirmed_by=B)
     assert "On Fire" in said(run("me", client, user=A))
     assert "On Fire" not in said(run("me", client, user=B))
+
+
+# --- the quick list, end to end --------------------------------------------
+
+def test_help_carries_the_whole_command_list(fake, client):
+    out = said(run("help", client))
+    assert "/tt board" in out and "/tt titles" in out
+    assert "How the rating works" in out
+
+
+def test_the_words_people_reach_for_all_land_on_help(fake, client):
+    """Somebody typing `commands` wants the list, and the list is in help."""
+    for word in ("commands", "cheatsheet", "quick"):
+        assert "/tt board" in said(run(word, client))
+
+
+def test_a_mistyped_command_is_answered_with_a_guess(fake, client):
+    out = said(run("boad", client))
+    assert "`boad`" in out and "/tt board" in out
+    assert "How the rating works" not in out       # not the whole of HELP
+
+
+def test_help_is_still_the_whole_thing(fake, client):
+    out = said(run("help", client))
+    assert "How the rating works" in out

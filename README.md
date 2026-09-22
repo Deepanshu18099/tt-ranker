@@ -36,6 +36,29 @@ three-game one, and margins are read relative to the game — 21-19 is a squeake
 
 ## Commands
 
+**`/tt help`** is the one place: how to log a session, then every command one
+line each grouped by what you're trying to do, then how the rating works. The
+admin commands are only listed for admins — a list of things you can't do is a
+worse list. `commands`, `cheatsheet`, `quick` and `usage` all land on it, because
+those are the words people reach for when they want the list.
+
+The list is generated from the parser's own alias table and a test asserts it
+covers every command with no duplicates, **and that every example on it parses
+back to the command it claims to be** — so it can't fall behind what the bot
+actually does. The hand-kept bullet list it replaced covered about two thirds of
+the commands and had no way of telling.
+
+Mistype one and you get a guess rather than the manual:
+
+```
+/tt boad
+→ I don't know `boad`. Did you mean `/tt board`?
+  `/tt help` lists everything.
+```
+
+Nothing is guessed when nothing is close — a wrong guess sends you off to read
+about a command you never wanted.
+
 Everything is one slash command, `/tt`.
 
 | Command | What it does |
