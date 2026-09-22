@@ -95,6 +95,32 @@ section.wrap+section.wrap:has(>.note){margin-top:var(--s4)}
   font-size:.6875rem;color:var(--muted)}
 .heat-key-note{margin-left:auto}
 
+/* Releases: a dated list, the newest marked. Read like a timeline rather than
+   a table — the date is the spine and the notes hang off it. */
+.footer-version{margin-top:var(--s2);font-size:.75rem}
+.footer-version a{color:var(--muted);border-bottom:1px solid var(--line-mid)}
+.footer-version a:hover{color:var(--text)}
+.releases{list-style:none;margin:0;padding:0;display:grid;gap:var(--s8)}
+.rel{display:grid;grid-template-columns:8.5rem 1fr;gap:var(--s6);
+  align-items:start}
+.rel-when{display:flex;flex-direction:column;gap:var(--s2);
+  padding-top:.35rem;position:sticky;top:76px}
+.rel-date{font-size:.8125rem;color:var(--muted);letter-spacing:-.02em}
+.rel-now{align-self:start;padding:.1rem .4rem;border:1px solid var(--ball-line);
+  border-radius:999px;background:var(--ball-bg);color:var(--ball);
+  font-size:.625rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.rel-body{min-width:0;padding-bottom:var(--s8);
+  border-bottom:1px solid var(--line)}
+.rel:last-child .rel-body{border-bottom:none;padding-bottom:0}
+.rel-name{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s3);
+  font-size:1.35rem}
+.rel-prs{font-size:.75rem;font-weight:400;color:var(--muted)}
+.rel-summary{margin:var(--s3) 0 0;font-size:1rem;color:var(--text)}
+.rel-notes{margin:var(--s3) 0 0;padding-left:1.1rem;color:var(--muted);
+  font-size:.9375rem;line-height:1.6}
+.rel-notes li{margin:.35rem 0}
+.rel-summary code,.rel-notes code{padding:.1rem .3rem;background:var(--raised);border-radius:var(--r-sm);color:var(--text)}
+
 /* The micro-label that titles nearly every block on the page. */
 .eyebrow{margin:0;font-size:.6875rem;font-weight:700;letter-spacing:.17em;
   text-transform:uppercase;color:var(--muted)}

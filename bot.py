@@ -1551,7 +1551,93 @@ def handle_odds(command, respond, bot_id=None):
             f"\n_{round(ra)} vs {round(rb)} — per game, on current ratings._")
 
 
-HELP = f""":table_tennis_paddle_and_ball: *TT Ranker* — the office table tennis ladder.
+# --- the quick list -------------------------------------------------------
+# The middle of /tt help: what are the words, one line each. It sits between
+# how-to-log and how-the-rating-works rather than in a command of its own,
+# because "what can I type?" is the question people bring to help.
+#
+# Grouped by what you are trying to do rather than alphabetically, because
+# nobody scans a leaderboard command list for the letter B. Every canonical name
+# in parsing.SUBCOMMANDS has to appear here exactly once — there is a test, so
+# this cannot quietly fall behind the parser.
+
+# Gated in the handlers, so listing them to everyone else only produces a
+# padlock. `name` is the odd one: naming yourself is open to all, naming someone
+# else is not, which the line says rather than hiding the command.
+ADMIN_ONLY = frozenset({"edit", "transfer", "nudge"})
+
+QUICK = (
+    ("Play", (
+        # The forms are spelled out above this list, so the entry is a
+        # signpost rather than a fourth copy of the same example.
+        ("log", "", "record a session — forms above"),
+        ("challenge", "@bob best of 5", "call someone out"),
+        ("accept", "4", "take a challenge"),
+        ("decline", "4", "turn one down"),
+        ("challenges", "", "what's outstanding"),
+        ("schedule", "@bob 6pm", "put a fixture up for the channel to back"),
+        ("reschedule", "6 7pm", "running late — move it, stakes intact"),
+        ("undo", "", "revert the last match you logged"),
+    )),
+    ("Look", (
+        ("board", "singles", "the ladder — or `doubles`, or bare for overall"),
+        ("me", "@bob", "one player's card"),
+        ("history", "@bob today", "results, by player and by day"),
+        ("titles", "", "who holds what"),
+        ("odds", "@bob", "who's favoured"),
+        ("pending", "", "results still waiting on a confirmation"),
+        ("who", "ChumChum", "a ladder name to a person, or back again"),
+    )),
+    ("Spins", (
+        ("wallet", "", "what you hold"),
+        ("rich", "", "the spins table"),
+        ("bet", "12 a 50", "back a side — the buttons are the usual way"),
+        ("book", "", "fixtures open to bet on"),
+    )),
+    ("You", (
+        ("register", "", "join the ladder before your first match"),
+        ("name", "Your Name", "how you appear on the web ladder"),
+        ("sync", "", "put everyone in this channel on the ladder"),
+        ("intro", "", "post the how-it-works message, for pinning"),
+        ("help", "", "this list, and how the rating works"),
+    )),
+    ("Admins", (
+        ("edit", "33 21-19 11-9", "correct a logged match — also `swap`, `void`"),
+        ("transfer", "@bob 500", "move spins between wallets"),
+        ("nudge", "", "DM everyone who hasn't set a name"),
+    )),
+)
+
+
+def quick_lines(admin=False):
+    """The quick list as lines. `admin` decides whether the padlocked group is
+    in it — a list of things you cannot do is a worse list."""
+    out = []
+    for group, entries in QUICK:
+        if group == "Admins" and not admin:
+            continue
+        out.append(f"*{group}*")
+        for name, usage, blurb in entries:
+            said = f"`/tt {name}{' ' + usage if usage else ''}`"
+            out.append(f"• {said} — {blurb}")
+    return out
+
+
+def did_you_mean(typed):
+    """What to say when nothing matches what somebody typed.
+
+    The old answer was the whole of HELP, which buries the one useful sentence —
+    that they typed it wrong — under forty lines about Elo.
+    """
+    guesses = parsing.suggest(typed)
+    said = f":grey_question: I don't know `{typed}`."
+    if guesses:
+        offered = " or ".join(f"`/tt {g}`" for g in guesses)
+        said += f" Did you mean {offered}?"
+    return said + "\n_`/tt help` lists everything._"
+
+
+HELP_HEAD = f""":table_tennis_paddle_and_ball: *TT Ranker* — the office table tennis ladder.
 
 *Log a session*
 • `/tt log` — opens a form: pick the players, type the scores
@@ -1588,6 +1674,10 @@ take it gets the fixture. Name your own partner for doubles and they bring their
 went in backwards, `void` to throw it out)_
 
 *How the rating works*
+results apply on their own after {store.AUTO_CONFIRM_HOURS}h."""
+
+
+HELP_TAIL = f"""*How the rating works*
 Everyone starts at *{elo.START_RATING}*. *Every game is rated on its own and \
 they add up* — so 10 games count for more than 3, and a session that splits \
 evenly moves nobody. Each game is worth more when you beat someone above you, \
@@ -1602,6 +1692,23 @@ replace it. *Every point you gain is a point somebody else lost* — a match is 
 for one stake you and your opponent share, so nothing here mints rating. \
 You join the ladder proper after {PLACEMENT_GAMES}. Full details: \
 <https://github.com/praneatdata/tt-ranker#how-your-rating-is-calculated|the README>."""
+
+
+def help_text(uid=None):
+    """`/tt help` — how it works, and every word that makes it work.
+
+    One command, not two. An earlier pass at this had a separate `/tt commands`
+    for the list, which is one command too many for one job: somebody who wants
+    to know what they can type reaches for help, and help should answer.
+
+    So the middle of it is the generated list — every canonical command in
+    parsing.SUBCOMMANDS, grouped by what you are trying to do — with the
+    padlocked group appended only for the people who can use it. The hand-kept
+    bullet list this replaces covered about two thirds of the commands and had
+    no way of telling.
+    """
+    return "\n".join([HELP_HEAD, ""] + quick_lines(admin=is_admin(uid))
+                      + ["", HELP_TAIL])
 
 
 # --- routing ---------------------------------------------------------------
@@ -1647,7 +1754,11 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
     store.remember_handle(command.get("user_id"), command.get("user_name"))
 
     if sub == "help":
-        respond(HELP)
+        # An unrecognised verb also lands on "help" (see split_subcommand), and
+        # answering a typo with the manual is how a typo stays a typo.
+        typed = parsing.unknown_verb(command.get("text", ""))
+        respond(did_you_mean(typed) if typed
+                else help_text(command.get("user_id")))
         return
     if not kv.kv_available():
         respond(NO_KV)
@@ -1707,7 +1818,7 @@ def handle_tt_command(ack, command, respond, client=None, context=None, logger=N
         elif sub == "transfer":
             handle_transfer(command, respond, client, bot_id, logger=logger)
         else:
-            respond(HELP)
+            respond(help_text(command.get("user_id")))
     except Exception:
         (logger or log).exception("/tt %s failed", sub)
         respond(":x: Something went wrong on my side — try again in a moment.")

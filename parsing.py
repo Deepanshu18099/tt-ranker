@@ -34,6 +34,10 @@ SPACED_SCORE_RE = re.compile(r"(\d)\s*[-–—:]\s*(\d)")
 _TRIM = ".,;!?()[]"
 
 SUBCOMMANDS = {
+    # The words people reach for when they want the list — all of them land on
+    # help, which is where the list lives.
+    "commands": "help", "cmds": "help", "cheatsheet": "help", "quick": "help",
+    "usage": "help",
     "log": "log", "add": "log", "result": "log", "played": "log",
     "score": "log", "record": "log", "beat": "log", "lost": "log",
     "register": "register", "join": "register", "signup": "register",
@@ -188,6 +192,64 @@ def split_subcommand(text):
     if key in SUBCOMMANDS:
         return SUBCOMMANDS[key], rest.strip()
     return ("log" if SCORE_RE.search(_normalize(text)) else "help"), text
+
+
+def unknown_verb(text):
+    """The first word of a command nothing recognises, or "" when there is
+    nothing to correct.
+
+    Empty is not a typo, a known alias is not a typo, and anything carrying a
+    scoreline is a log rather than a misspelling — `/tt @bob 11-7` is what
+    people type once they know the bot. What is left is somebody who meant
+    something and missed, which is worth answering with a guess instead of the
+    whole manual.
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+    first, _, _ = text.partition(" ")
+    key = first.strip(_TRIM).lower()
+    if not key or key in SUBCOMMANDS:
+        return ""
+    if SCORE_RE.search(_normalize(text)):
+        return ""
+    return key
+
+
+# Close enough to be a typo of it rather than a different word. Tuned up from
+# difflib's 0.6 default, which pairs `histry` with `commands` and helps nobody.
+SUGGEST_CUTOFF = 0.72
+
+
+def suggest(word, limit=2):
+    """The commands `word` was most likely meant to be, best first, or [].
+
+    Matched against every alias — somebody typing `leaderbord` is reaching for
+    `leaderboard`, and telling them about `board` is the useful answer — then
+    folded onto canonical names, because offering four spellings of one command
+    is not a shortlist.
+
+    Returning nothing is a real answer. A wrong guess is worse than no guess:
+    it sends someone off to read about a command they never wanted.
+    """
+    import difflib
+    key = (word or "").strip(_TRIM).lower()
+    if not key:
+        return []
+    close = difflib.get_close_matches(key, SUBCOMMANDS, n=8,
+                                      cutoff=SUGGEST_CUTOFF)
+    # An abbreviation scores badly and reads obviously: `chal` is four letters
+    # of one command and nothing else. Only when it is unambiguous, though.
+    if not close:
+        prefixed = [a for a in sorted(SUBCOMMANDS) if a.startswith(key)]
+        if len({SUBCOMMANDS[a] for a in prefixed}) == 1:
+            close = prefixed
+    out = []
+    for alias in close:
+        name = SUBCOMMANDS[alias]
+        if name not in out:
+            out.append(name)
+    return out[:limit]
 
 
 def _normalize(text):
